@@ -11,6 +11,7 @@ import threading
 import os
 import subprocess
 
+#Threaded mplayer class.  Create it with a url to a media file, start it and it plays.
 class mPlayer(threading.Thread):
   def __init__(self, url, parent):
     self.url = url
@@ -19,49 +20,55 @@ class mPlayer(threading.Thread):
     pass
   
   def run(self):
+	#create our control fifo, this is very important for proper functionality
     if not os.path.exists(".qpf"):
       os.mkfifo(".qpf")
-    mplayerProcess = subprocess.Popen(("mplayer", "-quiet", "-input", "file=.qpf", self.url))
+    mplayerProcess = subprocess.Popen(("mplayer", "-nolirc", "-noconsolecontrols", "-nolirc", "-nojoystick", "-quiet", "-input", "file=.qpf", self.url))
     mplayerProcess.wait()
     self.parent.play_next()
     
+#Authentication error class, for the Ampache Communicator
 class AuthError(Exception):
     """Authentication Failure"""
     pass
 
+#main communication class. 
 class AmpacheCommunicator:
   def __init__(self):
     self.playing = False
-  
+
+  #internal function for fetching data.
   def fetch(self, append):
-    data = urllib2.urlopen("%s%s" % (self.url, append)).read()
+    try:
+      data = urllib2.urlopen("%s%s" % (self.url, append)).read()
+    except:
+      raise AuthError("Error connecting to server")
     if data == None:
       self.reauthenticate()
       data = urllib2.urlopen("%s%s" % (self.url, append)).read()
       if data == None:
         raise AuthError("Unknown fetch error")
     return data
-  
+
+  #reauthenticate, should get called on fetch error
   def reauthenticate(self):
     timestamp = int(time.time())
-    try:
-      auth = urllib2.urlopen("%s?action=handshake&auth=%s&timestamp=%s" % (self.url, md5.md5(str(timestamp) + password).hexdigest(), timestamp)).read()
-    except:
-      raise AuthError("Error connecting to server")
+    auth = self.fetch("?action=handshake&auth=%s&timestamp=%s" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp))
     dom = xml.dom.minidom.parseString(auth)
     try:
       self.auth = dom.getElementsByTagName("auth")[0].childNodes[0].data
     except:
       raise AuthError("Bad server key")
-      
-  def authenticate(self, u, password):
+    
+  #authentication function, does not account for timeouts...
+  def authenticate(self, u, password, user=None):
     self.password = password
     self.url = u + "/server/xml.server.php"
     timestamp = int(time.time())
-    try:
-      auth = urllib2.urlopen("%s?action=handshake&auth=%s&timestamp=%s" % (self.url, md5.md5(str(timestamp) + password).hexdigest(), timestamp)).read()
-    except:
-      raise AuthError("Error connecting to server")
+    if user != None:
+      auth = self.fetch("?action=handshake&auth=%s&timestamp=%s&user=%s" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp, user))
+    else:
+      auth = self.fetch("?action=handshake&auth=%s&timestamp=%s" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp))
     dom = xml.dom.minidom.parseString(auth)
     try:
       self.auth = dom.getElementsByTagName("auth")[0].childNodes[0].data
@@ -118,7 +125,7 @@ class quickPlayer(threading.Thread):
     
   def login(self, widget, data=None):
     try:
-      self.com.authenticate(self.servE.get_text(), self.passE.get_text())
+      self.com.authenticate(self.servE.get_text(), self.passE.get_text(), self.userE.get_text())
     except:
       print "Error authenticating"
       return
@@ -232,6 +239,14 @@ class quickPlayer(threading.Thread):
     self.passE.set_visibility(False)
     self.passE.show()
     authBox.pack_start(self.passE, True, True, 2)
+
+    userL = gtk.Label("User:")
+    userL.show()
+    authBox.pack_start(userL, False, False, 2)
+
+    self.userE = gtk.Entry()
+    self.userE.show()
+    authBox.pack_start(self.userE, True, True, 2)
 
     goBut = gtk.Button("Login")
     goBut.show()
