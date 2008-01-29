@@ -10,6 +10,7 @@ import xml.dom.minidom
 import threading
 import os
 import subprocess
+import pickle
 
 #Threaded mplayer class.  Create it with a url to a media file, start it and it plays.
 class mPlayer(threading.Thread):
@@ -129,6 +130,11 @@ class quickPlayer(threading.Thread):
     except:
       print "Error authenticating"
       return
+    if self.authCB.get_active():
+      save = (self.servE.get_text(), self.passE.get_text(), self.userE.get_text())
+      fh = open('.qp.save', 'w')
+      fh.write(pickle.dumps(save))
+      fh.close()
     self.collectionStore.clear()
     for each in self.com.fetch_artists():
       self.collectionStore.append(None, (each[0], False, 0, each[1], None))
@@ -248,6 +254,11 @@ class quickPlayer(threading.Thread):
     self.userE.show()
     authBox.pack_start(self.userE, True, True, 2)
 
+    self.authCB = gtk.CheckButton("Save")
+    self.authCB.set_active(True)
+    self.authCB.show()
+    authBox.pack_start(self.authCB, True, True, 2)
+
     goBut = gtk.Button("Login")
     goBut.show()
     goBut.connect("clicked", self.login)
@@ -301,6 +312,18 @@ class quickPlayer(threading.Thread):
 
     mainBox.show()
     self.window.add(mainBox)    
+
+    try:
+      fh = open('.qp.save')
+      save = pickle.loads(fh.read())
+      fh.close()
+    except:
+      save = None
+
+    if save:
+      self.servE.set_text(save[0])
+      self.passE.set_text(save[1])
+      self.userE.set_text(save[2])
 
     self.window.show()
 
