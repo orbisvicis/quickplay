@@ -118,9 +118,7 @@ class quickPlayer(threading.Thread):
 
   def destroy(self, widget, data=None):
     if self.playing:
-      f = open(".qpf", 'w')
-      f.write("quit\n")
-      f.close()
+      self.stop(None)
       
     gtk.main_quit()
     
@@ -139,11 +137,8 @@ class quickPlayer(threading.Thread):
     for each in self.com.fetch_artists():
       self.collectionStore.append(None, (each[0], False, 0, each[1], None))
 
-  def do_selection(self, selection, data=None):
-    (model, titer) = selection.get_selected()
-    if titer == None:
-      return
-    view = selection.get_tree_view()
+  def cache_item(self, model, titer):
+    view = self.collectionView
     iID = model.get_value(titer, 0)
     iSeen = model.get_value(titer, 1)
     itype = model.get_value(titer, 2)
@@ -159,18 +154,36 @@ class quickPlayer(threading.Thread):
         model.append(titer, (each[0], False, 2, each[1], each))
       view.expand_row(model.get_path(titer), False)
                   
+
+  def do_selection(self, selection, data=None):
+    (model, titer) = selection.get_selected()
+    if titer == None:
+      return True
+    self.cache_item(model, titer)
+
   def do_activate(self, view, path, data=None):
     if self.playing:
-      f = open(".qpf", 'w')
-      f.write("quit\n")
-      f.close()
+      self.stop(None)
       self.next_override = True
+      
+    titer =  view.get_model().get_iter(path)
+    self.playLevel = view.get_model().get_value(titer,2)
+    self.play_item(titer)
 
-    if view.get_model().get_value(view.get_model().get_iter(path), 2) == 2:
-      url = view.get_model().get_value(view.get_model().get_iter(path), 4)[7]
-      self.playing = True
-      player = mPlayer(url, self)
-      player.start()
+  def play_item(self, titer):
+    model = self.collectionView.get_model()
+    self.cache_item(model, titer)
+    while model.get_value(titer, 2) < 2:
+      titer = model.iter_children(titer)
+      if titer:
+        self.cache_item(model, titer)
+
+    self.collectionSelection.select_iter(titer)
+
+    url = model.get_value(titer, 4)[7]
+    self.playing = True
+    player = mPlayer(url, self)
+    player.start()
 
   def play(self):
     return
@@ -195,18 +208,21 @@ class quickPlayer(threading.Thread):
     if self.playing:
       if not self.next_override:
         (model, titer) = self.collectionSelection.get_selected()
-        next = model.iter_next(titer)
-        if next:
-          if model.get_value(next, 2) == 2:
-            self.collectionSelection.select_iter(next)
-            player = mPlayer(model.get_value(next, 4)[7], self)
-            player.start()
+        if titer:
+          next = model.iter_next(titer)
+          if not next:
+            parent = model.iter_parent(titer)
+            if model.get_value(parent, 2) > self.playLevel:
+              next = model.iter_next(parent)
+          if next:
+            if model.get_value(next, 2) > self.playLevel:
+              self.play_item(next)
+            else:
+              self.playing = False
           else:
             self.playing = False
         else:
-          self.playing = False
-      else:
-        self.next_override = False
+          self.next_override = False
 
   def __init__(self):
     gtk.gdk.threads_init()
@@ -273,7 +289,7 @@ class quickPlayer(threading.Thread):
 
     self.collectionStore = gtk.TreeStore(gobject.TYPE_INT, gobject.TYPE_BOOLEAN, gobject.TYPE_INT, gobject.TYPE_STRING, gobject.TYPE_PYOBJECT)
     self.collectionView = gtk.TreeView(self.collectionStore)
-
+    
     collectionColumn = gtk.TreeViewColumn("Artist / Album / Song")
     self.collectionView.append_column(collectionColumn)
     cRender = gtk.CellRendererText()
