@@ -12,6 +12,7 @@ import os
 import subprocess
 import pickle
 
+
 #Threaded mplayer class.  Create it with a url to a media file, start it and it plays.
 class mPlayer(threading.Thread):
   def __init__(self, url, parent):
@@ -37,18 +38,28 @@ class AuthError(Exception):
 class AmpacheCommunicator:
   def __init__(self):
     self.playing = False
+    self.fetch_callback = None
 
   #internal function for fetching data.
   def fetch(self, append):
     try:
-      data = urllib2.urlopen("%s%s" % (self.url, append)).read()
+      temp = urllib2.urlopen("%s%s" % (self.url, append))
     except:
       raise AuthError("Error connecting to server")
+    headers = temp.info()
+    try:
+      size = int(headers['Content-Length'])
+    except:
+      return temp.read()
+    total = 0
+    data = ""
+    while total < size:
+      data = data + temp.read(1024)
+      total += 1024
+      if self.fetch_callback:
+        self.fetch_callback(float(total)/data)
     if data == None:
-      self.reauthenticate()
-      data = urllib2.urlopen("%s%s" % (self.url, append)).read()
-      if data == None:
-        raise AuthError("Unknown fetch error")
+      raise AuthError("Unknown fetch error")
     return data
 
   #reauthenticate, should get called on fetch error
@@ -112,6 +123,32 @@ class AmpacheCommunicator:
             node.getElementsByTagName("url")[0].childNodes[0].data))
     return ret
 
+class qpLogin(threading.Thread):
+  def __init__(self, parent):
+    self.parent = parent
+    threading.Thread.__init__(self)
+    pass
+
+  def run(self):
+    #self.parent.com.fetch_callback = self.pCallback
+    gtk.gdk.threads_enter()
+    self.progresswin = gtk.Window()
+    self.progressbar = gtk.ProgressBar()
+    self.progressbar.set_text("Fetching artists...")
+    self.progresswin.add(self.progressbar)
+    self.progressbar.show()
+    self.progresswin.show()
+    gtk.gdk.threads_leave()
+    data = self.parent.com.fetch_artists()
+    self.parent.com.fetch_callback = None
+    self.progresswin.hide()
+    self.parent.login_done(data)
+  
+  def pCallback(self, val):
+    gtk.gdk.threads_enter()
+    self.progressbar.set_fraction(val)
+    gtk.gdk.threads_leave()
+    
 class quickPlayer(threading.Thread):
   def delete_event(self, widget, event, data=None):
     return False
@@ -133,8 +170,12 @@ class quickPlayer(threading.Thread):
       fh = open('.qp.save', 'w')
       fh.write(pickle.dumps(save))
       fh.close()
+    self.login = qpLogin(self)
+    self.login.start()
+    
+  def login_done(self, data):
     self.collectionStore.clear()
-    for each in self.com.fetch_artists():
+    for each in data:
       self.collectionStore.append(None, (each[0], False, 0, each[1], None))
 
   def cache_item(self, model, titer):
