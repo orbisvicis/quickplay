@@ -242,8 +242,36 @@ class quickPlayer(threading.Thread):
       f.write("quit\n");
       f.close()
 
-  def next(self):
-    return
+  def prev(self, widget):
+    self.next_override = True
+    self.stop(None)
+    self.playing = True
+    self.play_prev()
+
+  def next(self, widget):
+    self.next_override = True
+    self.stop(None)
+    self.playing = True
+    self.next_override = False
+    self.play_next()
+
+  def play_prev(self):
+    (model, titer) = self.collectionSelection.get_selected()
+    if titer:
+      path = model.get_path(titer)
+      prev = None
+      if path[2] > 0:
+        prev = model.get_iter_from_string(":".join((path[0], path[1], path[2] - 1)))
+      elif path[1] > 0:
+        prev = model.get_iter_from_string(":".join((path[0], path[1] - 1, 0)))
+      if prev:
+        if model.get_value(prev, 2) > self.playLevel:
+          self.playing = True
+          self.play_item(prev)
+        else:
+          self.playing = False
+      else:
+        self.playing = False
 
   def play_next(self):
     if self.playing:
@@ -351,6 +379,12 @@ class quickPlayer(threading.Thread):
 
     butBox = gtk.HBox()
 
+    prev = gtk.Button(None, gtk.STOCK_MEDIA_PREVIOUS)
+    prev.show()
+    prev.get_children()[0].get_children()[0].get_children()[1].hide()
+    prev.connect('clicked', self.prev)
+    butBox.pack_start(prev, True, True, 0)
+
     playPause = gtk.Button(None, gtk.STOCK_MEDIA_PAUSE)
     playPause.show()
     playPause.get_children()[0].get_children()[0].get_children()[1].hide()
@@ -362,6 +396,12 @@ class quickPlayer(threading.Thread):
     stopBut.get_children()[0].get_children()[0].get_children()[1].hide()
     stopBut.connect('clicked', self.stop)
     butBox.pack_start(stopBut, True, True, 0)
+
+    next = gtk.Button(None, gtk.STOCK_MEDIA_NEXT)
+    next.show()
+    next.get_children()[0].get_children()[0].get_children()[1].hide()
+    next.connect('clicked', self.next)
+    butBox.pack_start(next, True, True, 0)
     
     butBox.show()
 
