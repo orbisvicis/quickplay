@@ -35,17 +35,17 @@ class AuthError(Exception):
     pass
 
 class ThreadedFetcher(threading.Thread):
-  def __init__(self, url, doneCB, progressCB=None):
+  def __init__(self, url, doneCB, args, progressCB=None):
     self.progress = progressCB
     self.done = doneCB
     self.url = url
-    self.parent = parent
+    self.args = args
     threading.Thread.__init__(self)
 
   def run(self):
     #Connect to the server and prepare to receive
     try:
-      temp = urllib2.urlopen("%s%s" % (self.url, append))
+      temp = urllib2.urlopen(self.url)
     except:
       raise AuthError("Error connecting to server")
 
@@ -54,19 +54,28 @@ class ThreadedFetcher(threading.Thread):
     try:
       size = int(headers['Content-Length'])
     except:
-      print "No content-length header"
-      data = temp.read()
+      data = ""
+      chunk = temp.read(1024)
+      while chunk:
+        data = data + chunk
+        if self.progress:
+          self.progress(None)
+        chunk = temp.read(1024)
+      if self.progress:
+        self.progress(1)
     else:
       total = 0
       data = ""
-      self.progress(0)
+      if self.progress:
+        self.progress(0)
       while total < size:
         data = data + temp.read(1024)
         total += 1024
         if total > size:
           total = size
-        self.progress(float(total)/size)
-    self.done(data)
+        if self.progress:
+          self.progress(float(total)/size)
+    self.done(data, self.args)
 
 #main communication class. 
 class AmpacheCommunicator:
@@ -75,21 +84,9 @@ class AmpacheCommunicator:
     self.progress = progress
 
   #internal function for fetching data.
-  def fetch(self, append):
-    try:
-      temp = urllib2.urlopen("%s%s" % (self.url, append))
-    except:
-      raise AuthError("Error connecting to server")
-    headers = temp.info()
-    try:
-      size = int(headers['Content-Length'])
-    except:
-      print "No content-length header"
-      return temp.read()
-    if data == None:
-      raise AuthError("Unknown fetch error")
-    print data
-    return data
+  def fetch(self, append, callback, args):
+    fetcher = ThreadedFetcher("%s%s" % (self.url, append), callback, args, self.progress)
+    fetcher.start()
 
   #reauthenticate, should get called on fetch error
   def reauthenticate(self):
@@ -102,30 +99,38 @@ class AmpacheCommunicator:
       raise AuthError("Bad server key")
     
   #authentication function, does not account for timeouts...
-  def authenticate(self, u, password, user=None):
+  def authenticate(self, u, password, user, callback):
     self.password = password
     self.url = u + "/server/xml.server.php"
     timestamp = int(time.time())
     if user != None:
-      auth = self.fetch("?action=handshake&auth=%s&timestamp=%s&user=%s" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp, user))
+      self.fetch("?action=handshake&auth=%s&timestamp=%s&user=%s" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp, user), self.auth_cb, callback)
     else:
-      auth = self.fetch("?action=handshake&auth=%s&timestamp=%s" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp))
+      self.fetch("?action=handshake&auth=%s&timestamp=%s" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp), self.auth_cb, callback)
+    return True
+
+  def auth_cb(self, auth, args):
     dom = xml.dom.minidom.parseString(auth)
     try:
       self.auth = dom.getElementsByTagName("auth")[0].childNodes[0].data
     except:
       raise AuthError("Bad server key")
+    args()
 
-  def fetch_artists(self):
-    artists = self.fetch("?action=artists&auth=%s" % (self.auth))
+  def fetch_artists(self, callback):
+    self.fetch("?action=artists&auth=%s" % (self.auth), self.fa_cb, callback)
+
+  def fa_cb(self, artists, args):
     dom = xml.dom.minidom.parseString(artists)
     ret = []
     for node in dom.getElementsByTagName("artist"):
       ret.append((int(node.getAttribute("id")), node.childNodes[1].childNodes[0].data))
-    return ret
-  
-  def fetch_albums(self, artistID):
-    albums = self.fetch("?action=artist_albums&auth=%s&filter=%s" % (self.auth, artistID))
+    args(ret)
+
+  def fetch_albums(self, artistID, callback, args):
+    self.fetch("?action=artist_albums&auth=%s&filter=%s" % (self.auth, artistID), self.fal_cb, (callback, args))
+
+  def fal_cb(self, albums, args):
     dom = xml.dom.minidom.parseString(albums)
     ret = []
     for node in dom.getElementsByTagName("album"):
@@ -135,10 +140,12 @@ class AmpacheCommunicator:
                        node.getElementsByTagName("year")[0].childNodes[0].data,
                        node.getElementsByTagName("tracks")[0].childNodes[0].data,
                        node.getElementsByTagName("art")[0].childNodes[0].data))
-    return ret
+    args[0](ret, args[1])
   
-  def fetch_songs(self, albumID):
-    tracks = self.fetch("?action=album_songs&auth=%s&filter=%s" % (self.auth, albumID))
+  def fetch_songs(self, albumID, callback, args):
+    tracks = self.fetch("?action=album_songs&auth=%s&filter=%s" % (self.auth, albumID), self.fs_cb, (callback, args))
+    
+  def fs_cb(self, tracks, args):
     dom = xml.dom.minidom.parseString(tracks)
     ret = []
     for node in dom.getElementsByTagName("song"):
@@ -150,36 +157,9 @@ class AmpacheCommunicator:
             node.getElementsByTagName("track")[0].childNodes[0].data,
             node.getElementsByTagName("time")[0].childNodes[0].data,
             node.getElementsByTagName("url")[0].childNodes[0].data))
-    return ret
+    args[0](ret, args[1])
 
-#This handles the threaded login, which takes ages for a big collection.
-class qpLogin(threading.Thread):
-  def __init__(self, parent):
-    self.parent = parent
-    threading.Thread.__init__(self)
-    pass
-
-  def run(self):
-    self.parent.com.fetch_callback = self.pCallback
-    gtk.gdk.threads_enter()
-    self.progresswin = gtk.Window()
-    self.progressbar = gtk.ProgressBar()
-    self.progressbar.set_text("Fetching artists...")
-    self.progresswin.add(self.progressbar)
-    self.progressbar.show()
-    self.progresswin.show()
-    gtk.gdk.threads_leave()
-    data = self.parent.com.fetch_artists()
-    self.parent.com.fetch_callback = None
-    self.progresswin.hide()
-    self.parent.login_done(data)
-  
-  def pCallback(self, val):
-    gtk.gdk.threads_enter()
-    self.progressbar.set_fraction(val)
-    gtk.gdk.threads_leave()
-    return
-    
+#Main GUI and logic
 class quickPlayer(threading.Thread):
   def delete_event(self, widget, event, data=None):
     return False
@@ -192,23 +172,24 @@ class quickPlayer(threading.Thread):
     
   def login(self, widget, data=None):
     try:
-      self.com.authenticate(self.servE.get_text(), self.passE.get_text(), self.userE.get_text())
+      self.com.authenticate(self.servE.get_text(), self.passE.get_text(), self.userE.get_text(), self.login_cb)
     except:
-      print "Error authenticating"
-      return
+      print "Authentication Error"
+    
+  def login_cb(self):
     if self.authCB.get_active():
       save = (self.servE.get_text(), self.passE.get_text(), self.userE.get_text())
       fh = open('.qp.save', 'w')
       fh.write(pickle.dumps(save))
       fh.close()
-    self.login = qpLogin(self)
-    self.login.start()
-    
+    self.com.fetch_artists(self.login_done)
+
   def login_done(self, data):
+    gtk.gdk.threads_enter()
     self.collectionStore.clear()
-    print len(data)
     for each in data:
       self.collectionStore.append(None, (each[0], False, 0, each[1], None))
+    gtk.gdk.threads_leave()
 
   def cache_item(self, model, titer):
     view = self.collectionView
@@ -217,16 +198,20 @@ class quickPlayer(threading.Thread):
     itype = model.get_value(titer, 2)
     if itype == 0 and not iSeen:
       model.set_value(titer,1,True)
-      for each in self.com.fetch_albums(iID):
-        model.append(titer, (each[0], False, 1, each[1], each))
-      view.expand_row(model.get_path(titer), False)
-      
+      self.com.fetch_albums(iID, self.ci_cb, (model, titer, 1))
     if itype == 1 and not iSeen:
       model.set_value(titer,1,True)
-      for each in self.com.fetch_songs(iID):
-        model.append(titer, (each[0], False, 2, each[1], each))
-      view.expand_row(model.get_path(titer), False)
+      self.com.fetch_songs(iID, self.ci_cb, (model, titer, 2))
                   
+  def ci_cb(self, data, args):
+    model = args[0]
+    titer = args[1]
+    val = args[2]
+    gtk.gdk.threads_enter()
+    for each in data:
+      model.append(titer, (each[0], False, val, each[1], each))
+    self.collectionView.expand_row(model.get_path(titer), False)
+    gtk.gdk.threads_leave()
 
   def do_selection(self, selection, data=None):
     (model, titer) = selection.get_selected()
@@ -325,6 +310,14 @@ class quickPlayer(threading.Thread):
         else:
           self.next_override = False
 
+  def progress(self, val):
+    gtk.gdk.threads_enter()
+    if val == None:
+      self.progB.pulse()
+    else:
+      self.progB.set_fraction(val)
+    gtk.gdk.threads_leave()
+
   def __init__(self):
     gtk.gdk.threads_init()
 
@@ -334,7 +327,7 @@ class quickPlayer(threading.Thread):
     threading.Thread.__init__(self)
     pass
     
-    self.com = AmpacheCommunicator()
+    self.com = AmpacheCommunicator(self.progress)
 
     self.window = gtk.Window(gtk.WINDOW_TOPLEVEL)
     self.window.connect("delete_event", self.delete_event)
@@ -409,6 +402,11 @@ class quickPlayer(threading.Thread):
     collectionBox.show()
     mainBox.add(collectionBox)
 
+    self.progB = gtk.ProgressBar()
+    self.progB.set_fraction(1)
+    self.progB.show()
+    mainBox.pack_start(self.progB, False, False, 1)
+
     butBox = gtk.HBox()
 
     prev = gtk.Button(None, gtk.STOCK_MEDIA_PREVIOUS)
@@ -457,7 +455,9 @@ class quickPlayer(threading.Thread):
     self.window.show()
 
   def run(self):
+    gtk.gdk.threads_enter()
     gtk.main()
+    gtk.gdk.threads_leave()
     return
 
 if __name__ == "__main__":
