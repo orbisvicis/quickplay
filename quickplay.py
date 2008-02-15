@@ -44,6 +44,8 @@ class ThreadedFetcher(threading.Thread):
 
   def run(self):
     #Connect to the server and prepare to receive
+    if self.progress:
+      self.progress(None, "Requesting...")
     try:
       temp = urllib2.urlopen(self.url)
     except:
@@ -56,18 +58,18 @@ class ThreadedFetcher(threading.Thread):
     except:
       data = ""
       chunk = temp.read(1024)
+      if self.progress:
+        self.progress(None, "Fetching...")
       while chunk:
         data = data + chunk
-        if self.progress:
-          self.progress(None)
         chunk = temp.read(1024)
       if self.progress:
-        self.progress(1)
+        self.progress(1, " ")
     else:
       total = 0
       data = ""
       if self.progress:
-        self.progress(0)
+        self.progress(0, "Fetching...")
       while total < size:
         data = data + temp.read(1024)
         total += 1024
@@ -75,6 +77,8 @@ class ThreadedFetcher(threading.Thread):
           total = size
         if self.progress:
           self.progress(float(total)/size)
+    if self.progress:
+      self.progress(1, " ")
     self.done(data, self.args)
 
 #main communication class. 
@@ -310,16 +314,30 @@ class quickPlayer(threading.Thread):
         else:
           self.next_override = False
 
-  def progress(self, val):
+  def progress(self, val, txt = None):
     gtk.gdk.threads_enter()
     if val == None:
-      self.progB.pulse()
+      self.ticking = True
+      gobject.idle_add(self.tick)
     else:
+      self.ticking = False
       self.progB.set_fraction(val)
+      if txt:
+        self.progB.set_text(txt)
     gtk.gdk.threads_leave()
+
+  def tick(self):
+    if self.ticking:
+      self.progB.pulse()
+      time.sleep(.05)
+      return True
+    return False
+
 
   def __init__(self):
     gtk.gdk.threads_init()
+
+    self.ticking = False
 
     self.playing = False
     self.next_override = False
@@ -404,6 +422,7 @@ class quickPlayer(threading.Thread):
 
     self.progB = gtk.ProgressBar()
     self.progB.set_fraction(1)
+    self.progB.set_pulse_step(.01)
     self.progB.show()
     mainBox.pack_start(self.progB, False, False, 1)
 
