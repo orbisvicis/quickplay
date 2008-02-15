@@ -34,11 +34,45 @@ class AuthError(Exception):
     """Authentication Failure"""
     pass
 
+class ThreadedFetcher(threading.Thread):
+  def __init__(self, url, doneCB, progressCB=None):
+    self.progress = progressCB
+    self.done = doneCB
+    self.url = url
+    self.parent = parent
+    threading.Thread.__init__(self)
+
+  def run(self):
+    #Connect to the server and prepare to receive
+    try:
+      temp = urllib2.urlopen("%s%s" % (self.url, append))
+    except:
+      raise AuthError("Error connecting to server")
+
+    #If they don't send content-length, we don't bother with progress
+    headers = temp.info()
+    try:
+      size = int(headers['Content-Length'])
+    except:
+      print "No content-length header"
+      data = temp.read()
+    else:
+      total = 0
+      data = ""
+      self.progress(0)
+      while total < size:
+        data = data + temp.read(1024)
+        total += 1024
+        if total > size:
+          total = size
+        self.progress(float(total)/size)
+    self.done(data)
+
 #main communication class. 
 class AmpacheCommunicator:
-  def __init__(self):
+  def __init__(self, progress = None):
     self.playing = False
-    self.fetch_callback = None
+    self.progress = progress
 
   #internal function for fetching data.
   def fetch(self, append):
@@ -50,16 +84,11 @@ class AmpacheCommunicator:
     try:
       size = int(headers['Content-Length'])
     except:
+      print "No content-length header"
       return temp.read()
-    total = 0
-    data = ""
-    while total < size:
-      data = data + temp.read(1024)
-      total += 1024
-      if self.fetch_callback:
-        self.fetch_callback(float(total)/data)
     if data == None:
       raise AuthError("Unknown fetch error")
+    print data
     return data
 
   #reauthenticate, should get called on fetch error
@@ -123,6 +152,7 @@ class AmpacheCommunicator:
             node.getElementsByTagName("url")[0].childNodes[0].data))
     return ret
 
+#This handles the threaded login, which takes ages for a big collection.
 class qpLogin(threading.Thread):
   def __init__(self, parent):
     self.parent = parent
@@ -130,7 +160,7 @@ class qpLogin(threading.Thread):
     pass
 
   def run(self):
-    #self.parent.com.fetch_callback = self.pCallback
+    self.parent.com.fetch_callback = self.pCallback
     gtk.gdk.threads_enter()
     self.progresswin = gtk.Window()
     self.progressbar = gtk.ProgressBar()
@@ -148,6 +178,7 @@ class qpLogin(threading.Thread):
     gtk.gdk.threads_enter()
     self.progressbar.set_fraction(val)
     gtk.gdk.threads_leave()
+    return
     
 class quickPlayer(threading.Thread):
   def delete_event(self, widget, event, data=None):
@@ -175,6 +206,7 @@ class quickPlayer(threading.Thread):
     
   def login_done(self, data):
     self.collectionStore.clear()
+    print len(data)
     for each in data:
       self.collectionStore.append(None, (each[0], False, 0, each[1], None))
 
