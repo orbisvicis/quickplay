@@ -13,13 +13,24 @@ import subprocess
 import pickle
 
 
+class _IdleObject(gobject.GObject):
+  def __init__(self):
+    gobject.GObject.__init__(self)
+
+  def emit(self, *args):
+    gobject.idle_add(gobject.GObject.emit, self, *args)
+
 #Threaded mplayer class.  Create it with a url to a media file, start it and it plays.
-class mPlayer(threading.Thread):
+class mPlayer(threading.Thread, _IdleObject):
+  __gsignals__ = {
+    'completed' : (gobject.SIGNAL_RUN_LAST, gobject.TYPE_NONE, ())
+    }
+  
   def __init__(self, url, parent):
+    threading.Thread.__init__(self)
+    _IdleObject.__init__(self)
     self.url = url
     self.parent = parent
-    threading.Thread.__init__(self)
-    pass
   
   def run(self):
 	#create our control fifo, this is very important for proper functionality
@@ -27,20 +38,22 @@ class mPlayer(threading.Thread):
       os.mkfifo(".qpf")
     mplayerProcess = subprocess.Popen(("mplayer", "-nolirc", "-noconsolecontrols", "-nolirc", "-nojoystick", "-quiet", "-input", "file=.qpf", self.url))
     mplayerProcess.wait()
-    self.parent.play_next()
+    self.emit("completed")
+
+gobject.type_register(mPlayer)
     
 #Authentication error class, for the Ampache Communicator
 class AuthError(Exception):
     """Authentication Failure"""
     pass
 
-class ThreadedFetcher(threading.Thread):
+class ThreadedFetcher(threading.Thread, _IdleObject):
   def __init__(self, url, doneCB, args, progressCB=None):
+    threading.Thread.__init__(self)
     self.progress = progressCB
     self.done = doneCB
     self.url = url
     self.args = args
-    threading.Thread.__init__(self)
 
   def run(self):
     #Connect to the server and prepare to receive
@@ -81,6 +94,8 @@ class ThreadedFetcher(threading.Thread):
       self.progress(1, " ")
     self.done(data, self.args)
 
+gobject.type_register(ThreadedFetcher)
+
 #main communication class. 
 class AmpacheCommunicator:
   def __init__(self, progress = None):
@@ -91,6 +106,7 @@ class AmpacheCommunicator:
   def fetch(self, append, callback, args):
     fetcher = ThreadedFetcher("%s%s" % (self.url, append), callback, args, self.progress)
     fetcher.start()
+    return fetcher
 
   #reauthenticate, should get called on fetch error
   def reauthenticate(self):
@@ -122,7 +138,7 @@ class AmpacheCommunicator:
     args()
 
   def fetch_artists(self, callback):
-    self.fetch("?action=artists&auth=%s" % (self.auth), self.fa_cb, callback)
+    return self.fetch("?action=artists&auth=%s" % (self.auth), self.fa_cb, callback)
 
   def fa_cb(self, artists, args):
     dom = xml.dom.minidom.parseString(artists)
@@ -132,7 +148,7 @@ class AmpacheCommunicator:
     args(ret)
 
   def fetch_albums(self, artistID, callback, args):
-    self.fetch("?action=artist_albums&auth=%s&filter=%s" % (self.auth, artistID), self.fal_cb, (callback, args))
+    return self.fetch("?action=artist_albums&auth=%s&filter=%s" % (self.auth, artistID), self.fal_cb, (callback, args))
 
   def fal_cb(self, albums, args):
     dom = xml.dom.minidom.parseString(albums)
@@ -147,7 +163,7 @@ class AmpacheCommunicator:
     args[0](ret, args[1])
   
   def fetch_songs(self, albumID, callback, args):
-    tracks = self.fetch("?action=album_songs&auth=%s&filter=%s" % (self.auth, albumID), self.fs_cb, (callback, args))
+    return self.fetch("?action=album_songs&auth=%s&filter=%s" % (self.auth, albumID), self.fs_cb, (callback, args))
     
   def fs_cb(self, tracks, args):
     dom = xml.dom.minidom.parseString(tracks)
@@ -164,7 +180,7 @@ class AmpacheCommunicator:
     args[0](ret, args[1])
 
 #Main GUI and logic
-class quickPlayer(threading.Thread):
+class quickPlayer:
   def delete_event(self, widget, event, data=None):
     return False
 
@@ -202,10 +218,10 @@ class quickPlayer(threading.Thread):
     itype = model.get_value(titer, 2)
     if itype == 0 and not iSeen:
       model.set_value(titer,1,True)
-      self.com.fetch_albums(iID, self.ci_cb, (model, titer, 1))
+      return self.com.fetch_albums(iID, self.ci_cb, (model, titer, 1))
     if itype == 1 and not iSeen:
       model.set_value(titer,1,True)
-      self.com.fetch_songs(iID, self.ci_cb, (model, titer, 2))
+      return self.com.fetch_songs(iID, self.ci_cb, (model, titer, 2))
                   
   def ci_cb(self, data, args):
     model = args[0]
@@ -225,46 +241,54 @@ class quickPlayer(threading.Thread):
 
   def do_activate(self, view, path, data=None):
     if self.playing:
-      self.stop(None)
       self.next_override = True
+      self.stop(None)
       
-    titer =  view.get_model().get_iter(path)
+    titer = view.get_model().get_iter(path)
     self.playLevel = view.get_model().get_value(titer,2)
+    if self.playLevel == 2:
+      self.playLevel = 1
     self.play_item(titer)
 
   def play_item(self, titer):
     model = self.collectionView.get_model()
-    self.cache_item(model, titer)
-    while model.get_value(titer, 2) < 2:
+    while model.get_value(titer, 2) < 2: #Parse down the tree to the songs
+      thread = self.cache_item(model, titer) #we have to cache the item before we can determine if it has children
+      if thread:
+        while thread.isAlive():
+          gtk.main_iteration(block=True)
+        thread.join()
       titer = model.iter_children(titer)
       if titer:
-        self.cache_item(model, titer)
+        self.collectionView.expand_row(model.get_path(titer), False)
 
     self.collectionSelection.select_iter(titer)
 
     url = model.get_value(titer, 4)[7]
     self.playing = True
-    player = mPlayer(url, self)
-    player.start()
+    self.player = mPlayer(url, self)
+    self.player.connect('completed', self.play_next)
+    self.player.start()
 
   def play(self):
     return
 
   def play_pause(self, widget):
-    if self.playing:
-      f = open(".qpf", 'w')
-      f.write("pause\n")
-      f.close()
+    if self.player:
+      if self.player.isAlive():
+        f = open(".qpf", 'w')
+        f.write("pause\n")
+        f.close()
 
   def stop(self, widget):
-    if self.playing:
-      self.playing = False
-      f = open(".qpf", 'w')
-      f.write("quit\n");
-      f.close()
+    if self.player:
+      if self.player.isAlive():
+        self.playing = False
+        f = open(".qpf", 'w')
+        f.write("quit\n");
+        f.close()
 
   def prev(self, widget):
-    self.next_override = True
     self.stop(None)
     self.playing = True
     self.play_prev()
@@ -273,8 +297,7 @@ class quickPlayer(threading.Thread):
     self.next_override = True
     self.stop(None)
     self.playing = True
-    self.next_override = False
-    self.play_next()
+    self.play_next(None)
 
   def play_prev(self):
     (model, titer) = self.collectionSelection.get_selected()
@@ -282,9 +305,9 @@ class quickPlayer(threading.Thread):
       path = model.get_path(titer)
       prev = None
       if path[2] > 0:
-        prev = model.get_iter_from_string(":".join((path[0], path[1], path[2] - 1)))
+        prev = model.get_iter_from_string("%i:%i:%i" % (path[0], path[1], path[2] - 1))
       elif path[1] > 0:
-        prev = model.get_iter_from_string(":".join((path[0], path[1] - 1, 0)))
+        prev = model.get_iter_from_string("%i:%i:0" % (path[0], path[1] - 1))
       if prev:
         if model.get_value(prev, 2) > self.playLevel:
           self.playing = True
@@ -294,7 +317,9 @@ class quickPlayer(threading.Thread):
       else:
         self.playing = False
 
-  def play_next(self):
+  def play_next(self, widget):
+    if self.player:
+      self.player.join()
     if self.playing:
       if not self.next_override:
         (model, titer) = self.collectionSelection.get_selected()
@@ -312,7 +337,9 @@ class quickPlayer(threading.Thread):
           else:
             self.playing = False
         else:
-          self.next_override = False
+          self.playing = False
+      else:
+        self.next_override = False
 
   def progress(self, val, txt = None):
     gtk.gdk.threads_enter()
@@ -339,11 +366,10 @@ class quickPlayer(threading.Thread):
 
     self.ticking = False
 
+    self.player = None
+
     self.playing = False
     self.next_override = False
-    
-    threading.Thread.__init__(self)
-    pass
     
     self.com = AmpacheCommunicator(self.progress)
 
@@ -401,6 +427,7 @@ class quickPlayer(threading.Thread):
 
     self.collectionStore = gtk.TreeStore(gobject.TYPE_INT, gobject.TYPE_BOOLEAN, gobject.TYPE_INT, gobject.TYPE_STRING, gobject.TYPE_PYOBJECT)
     self.collectionView = gtk.TreeView(self.collectionStore)
+    self.collectionView.set_search_column(3)
     
     collectionColumn = gtk.TreeViewColumn("Artist / Album / Song")
     self.collectionView.append_column(collectionColumn)
@@ -474,11 +501,9 @@ class quickPlayer(threading.Thread):
     self.window.show()
 
   def run(self):
-    gtk.gdk.threads_enter()
     gtk.main()
-    gtk.gdk.threads_leave()
     return
 
 if __name__ == "__main__":
   qp = quickPlayer()
-  qp.start()
+  qp.run()
