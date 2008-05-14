@@ -74,7 +74,7 @@ class ThreadedFetcher(threading.Thread, _IdleObject):
       if self.progress:
         self.progress(None, "Fetching...")
       while chunk:
-        data = data + chunk
+        data += chunk
         chunk = temp.read(1024)
       if self.progress:
         self.progress(1, " ")
@@ -151,7 +151,7 @@ class AmpacheCommunicator:
       pd = pickle.loads(fh.read())
       fh.close()
       if hasattr(self, 'update') and hasattr(self, 'add'):
-        if pd['update'] == self.update and pd['add'] == self.add:
+        if pd['update'] == self.update and pd['add'] == self.add and pd['url'] == self.url:
           callback(pd['data'])
           return
     return self.fetch("?action=artists&auth=%s" % (self.auth), self.fa_cb, callback)
@@ -163,7 +163,7 @@ class AmpacheCommunicator:
       ret.append((int(node.getAttribute("id")), node.childNodes[1].childNodes[0].data))
     if hasattr(self, 'update') and hasattr(self, 'add'):
       fh = open('.qp_cache', 'w')
-      fh.write(pickle.dumps({'add': self.add, 'update': self.update, 'data': ret}))
+      fh.write(pickle.dumps({'add': self.add, 'update': self.update, 'url': self.url, 'data': ret}))
       fh.close()
     args(ret)
 
