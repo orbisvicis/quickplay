@@ -135,9 +135,25 @@ class AmpacheCommunicator:
       self.auth = dom.getElementsByTagName("auth")[0].childNodes[0].data
     except:
       raise AuthError("Bad server key")
+    try:
+      self.update = dom.getElementsByTagName("update")[0].childNodes[0].data
+      self.add = dom.getElementsByTagName("add")[0].childNodes[0].data
+    except:
+      print "Didn't get extra catalog info"
     args()
 
   def fetch_artists(self, callback):
+    try:
+      fh = open('.qp_cache', 'r')
+    except:
+      print "No cache file found, will generate"
+    else:
+      pd = pickle.loads(fh.read())
+      fh.close()
+      if hasattr(self, 'update') and hasattr(self, 'add'):
+        if pd['update'] == self.update and pd['add'] == self.add:
+          callback(pd['data'])
+          return
     return self.fetch("?action=artists&auth=%s" % (self.auth), self.fa_cb, callback)
 
   def fa_cb(self, artists, args):
@@ -145,6 +161,10 @@ class AmpacheCommunicator:
     ret = []
     for node in dom.getElementsByTagName("artist"):
       ret.append((int(node.getAttribute("id")), node.childNodes[1].childNodes[0].data))
+    if hasattr(self, 'update') and hasattr(self, 'add'):
+      fh = open('.qp_cache', 'w')
+      fh.write(pickle.dumps({'add': self.add, 'update': self.update, 'data': ret}))
+      fh.close()
     args(ret)
 
   def fetch_albums(self, artistID, callback, args):
