@@ -77,7 +77,7 @@ class ThreadedFetcher(threading.Thread, _IdleObject):
         data += chunk
         chunk = temp.read(1024)
       if self.progress:
-        self.progress(1, " ")
+        self.progress(1, "")
     else:
       total = 0
       data = ""
@@ -89,7 +89,7 @@ class ThreadedFetcher(threading.Thread, _IdleObject):
         if total > size:
           total = size
         if self.progress:
-          self.progress(float(total)/size)
+          self.progress(float(total)/size, "Fetching...")
     if self.progress:
       self.progress(1, " ")
     self.done(data, self.args)
@@ -124,9 +124,9 @@ class AmpacheCommunicator:
     self.url = u + "/server/xml.server.php"
     timestamp = int(time.time())
     if user != None:
-      self.fetch("?action=handshake&auth=%s&timestamp=%s&user=%s" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp, user), self.auth_cb, callback)
+      self.fetch("?action=handshake&auth=%s&timestamp=%s&user=%s&version=350001" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp, user), self.auth_cb, callback)
     else:
-      self.fetch("?action=handshake&auth=%s&timestamp=%s" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp), self.auth_cb, callback)
+      self.fetch("?action=handshake&auth=%s&timestamp=%s&version=350001" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp), self.auth_cb, callback)
     return True
 
   def auth_cb(self, auth, args):
@@ -134,7 +134,7 @@ class AmpacheCommunicator:
     try:
       self.auth = dom.getElementsByTagName("auth")[0].childNodes[0].data
     except:
-      raise AuthError("Bad server key")
+      raise AuthError(dom.getElementsByTagName("error")[0].childNodes[0].data)
     try:
       self.update = dom.getElementsByTagName("update")[0].childNodes[0].data
       self.add = dom.getElementsByTagName("add")[0].childNodes[0].data
@@ -364,13 +364,14 @@ class quickPlayer:
   def progress(self, val, txt = None):
     gtk.gdk.threads_enter()
     if val == None:
-      self.ticking = True
-      gobject.idle_add(self.tick)
+      if not self.ticking:
+        self.ticking = True
+        gobject.idle_add(self.tick)
     else:
       self.ticking = False
       self.progB.set_fraction(val)
-      if txt:
-        self.progB.set_text(txt)
+    if txt != None:
+      self.progB.set_text(txt)
     gtk.gdk.threads_leave()
 
   def tick(self):
