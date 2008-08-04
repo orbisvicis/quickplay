@@ -99,7 +99,6 @@ gobject.type_register(ThreadedFetcher)
 #main communication class. 
 class AmpacheCommunicator:
   def __init__(self, progress = None):
-    self.playing = False
     self.progress = progress
 
   #internal function for fetching data.
@@ -140,6 +139,7 @@ class AmpacheCommunicator:
       self.add = dom.getElementsByTagName("add")[0].childNodes[0].data
     except:
       print "Didn't get extra catalog info"
+    #run the post_auth callback
     args()
 
   def fetch_artists(self, callback):
@@ -206,8 +206,9 @@ class quickPlayer:
     return False
 
   def destroy(self, widget, data=None):
-    if self.playing:
-      self.stop(None)
+    if self.player:
+      if self.player.isAlive():
+        self.stop(None)
       
     gtk.main_quit()
     
@@ -261,9 +262,9 @@ class quickPlayer:
     self.cache_item(model, titer)
 
   def do_activate(self, view, path, data=None):
-    if self.playing:
-      self.next_override = True
-      self.stop(None)
+    if self.player:
+      if self.player.isAlive():
+        self.stop(None)
       
     titer = view.get_model().get_iter(path)
     self.playLevel = view.get_model().get_value(titer,2)
@@ -286,9 +287,8 @@ class quickPlayer:
     self.collectionSelection.select_iter(titer)
 
     url = model.get_value(titer, 4)[7]
-    self.playing = True
     self.player = mPlayer(url, self)
-    self.player.connect('completed', self.play_next)
+    self.player_sig = self.player.connect('completed', self.play_next)
     self.player.start()
 
   def play(self):
@@ -301,26 +301,29 @@ class quickPlayer:
         f.write("pause\n")
         f.close()
 
+  def stop_button(self, widget):
+    self.stop(None)
+
   def stop(self, widget):
     if self.player:
       if self.player.isAlive():
-        self.playing = False
+        self.player.disconnect(self.player_sig)
         f = open(".qpf", 'w')
         f.write("quit\n");
         f.close()
+        self.player.join()
 
   def prev(self, widget):
-    self.stop(None)
-    self.playing = True
     self.play_prev()
 
   def next(self, widget):
-    self.next_override = True
-    self.stop(None)
-    self.playing = True
     self.play_next(None)
 
   def play_prev(self):
+    if self.player:
+      if self.player.isAlive():
+        self.stop(None)
+        
     (model, titer) = self.collectionSelection.get_selected()
     if titer:
       path = model.get_path(titer)
@@ -331,36 +334,24 @@ class quickPlayer:
         prev = model.get_iter_from_string("%i:%i:0" % (path[0], path[1] - 1))
       if prev:
         if model.get_value(prev, 2) > self.playLevel:
-          self.playing = True
           self.play_item(prev)
-        else:
-          self.playing = False
-      else:
-        self.playing = False
 
   def play_next(self, widget):
+    #Get rid of already playing instance
     if self.player:
-      self.player.join()
-    if self.playing:
-      if not self.next_override:
-        (model, titer) = self.collectionSelection.get_selected()
-        if titer:
-          next = model.iter_next(titer)
-          if not next:
-            parent = model.iter_parent(titer)
-            if model.get_value(parent, 2) > self.playLevel:
-              next = model.iter_next(parent)
-          if next:
-            if model.get_value(next, 2) > self.playLevel:
-              self.play_item(next)
-            else:
-              self.playing = False
-          else:
-            self.playing = False
-        else:
-          self.playing = False
-      else:
-        self.next_override = False
+      if self.player.isAlive():
+        self.stop(None)
+        #if not self.next_override:
+    (model, titer) = self.collectionSelection.get_selected()
+    if titer:
+      next = model.iter_next(titer)
+      if not next:
+        parent = model.iter_parent(titer)
+        if model.get_value(parent, 2) > self.playLevel:
+          next = model.iter_next(parent)
+      if next:
+        if model.get_value(next, 2) > self.playLevel:
+          self.play_item(next)
 
   def progress(self, val, txt = None):
     gtk.gdk.threads_enter()
@@ -390,9 +381,6 @@ class quickPlayer:
 
     self.player = None
 
-    self.playing = False
-    self.next_override = False
-    
     self.com = AmpacheCommunicator(self.progress)
 
     self.window = gtk.Window(gtk.WINDOW_TOPLEVEL)
@@ -492,7 +480,7 @@ class quickPlayer:
     stopBut = gtk.Button(None, gtk.STOCK_MEDIA_STOP)
     stopBut.show()
     stopBut.get_children()[0].get_children()[0].get_children()[1].hide()
-    stopBut.connect('clicked', self.stop)
+    stopBut.connect('clicked', self.stop_button)
     butBox.pack_start(stopBut, True, True, 0)
 
     next = gtk.Button(None, gtk.STOCK_MEDIA_NEXT)
