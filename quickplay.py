@@ -193,7 +193,8 @@ class AmpacheCommunicator:
             node.getElementsByTagName("title")[0].childNodes[0].data,
             node.getElementsByTagName("artist")[0].childNodes[0].data,
             node.getElementsByTagName("album")[0].childNodes[0].data,
-            node.getElementsByTagName("genre")[0].childNodes[0].data,
+#            node.getElementsByTagName("genre")[0].childNodes[0].data if node.getElementsByTagName("genre") else 0,
+            0,
             node.getElementsByTagName("track")[0].childNodes[0].data,
             node.getElementsByTagName("time")[0].childNodes[0].data,
             node.getElementsByTagName("url")[0].childNodes[0].data))
