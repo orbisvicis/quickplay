@@ -179,7 +179,7 @@ class AmpacheCommunicator:
           return
     self.artist_ret = []
     if self.artists_num <= 5000:
-      return self.fetch("?action=artists&auth=%s" % (self.auth), self.fa_cb_inc , (self.fa_cb_done, callback))
+      return self.fetch("?action=artists&auth=%s" % (self.auth), self.fa_cb_inc , (self.fa_cb_done, callback, None, None))
     else:
       urls = []
       for i in range(0,self.artists_num, 5000):
