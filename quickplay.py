@@ -159,6 +159,7 @@ class AmpacheCommunicator:
     try:
       self.update = dom.getElementsByTagName("update")[0].childNodes[0].data
       self.add = dom.getElementsByTagName("add")[0].childNodes[0].data
+      self.artists_num = int(dom.getElementsByTagName("artists")[0].childNodes[0].data)
     except:
       print "Didn't get extra catalog info"
     #run the post_auth callback
@@ -176,18 +177,33 @@ class AmpacheCommunicator:
         if pd['update'] == self.update and pd['add'] == self.add and pd['url'] == self.url:
           callback(pd['data'])
           return
-    return self.fetch("?action=artists&auth=%s" % (self.auth), self.fa_cb, callback)
+    self.artist_ret = []
+    if self.artists_num <= 5000:
+      return self.fetch("?action=artists&auth=%s" % (self.auth), self.fa_cb_inc , (self.fa_cb_done, callback))
+    else:
+      urls = []
+      for i in range(0,self.artists_num, 5000):
+        urls.append("?action=artists&auth=%s&offset=%i" % (self.auth, i))
+      urls.reverse()
 
-  def fa_cb(self, artists, args):
+      args = (urls[0], self.fa_cb_inc, (self.fa_cb_done, callback, None, None))
+      for each in urls[1:]:
+        args = (each, self.fa_cb_inc, (self.fetch, args[0], args[1], args[2]))
+
+      return self.fetch(args[0],args[1],args[2])
+        
+  def fa_cb_inc(self, artists, args):
     dom = xml.dom.minidom.parseString(artists)
-    ret = []
     for node in dom.getElementsByTagName("artist"):
-      ret.append((int(node.getAttribute("id")), node.childNodes[1].childNodes[0].data))
+      self.artist_ret.append((int(node.getAttribute("id")), node.childNodes[1].childNodes[0].data))
+    args[0](args[1], args[2], args[3])
+
+  def fa_cb_done(self, args, junk1, junk2):
     if hasattr(self, 'update') and hasattr(self, 'add'):
       fh = open('.qp_cache', 'w')
-      fh.write(pickle.dumps({'add': self.add, 'update': self.update, 'url': self.url, 'data': ret}))
+      fh.write(pickle.dumps({'add': self.add, 'update': self.update, 'url': self.url, 'data': self.artist_ret}))
       fh.close()
-    args(ret)
+    args(self.artist_ret)
 
   def fetch_albums(self, artistID, callback, args):
     return self.fetch("?action=artist_albums&auth=%s&filter=%s" % (self.auth, artistID), self.fal_cb, (callback, args))
@@ -254,6 +270,7 @@ class quickPlayer:
     for each in data:
       self.collectionStore.append(None, (each[0], False, 0, each[1], None))
     gtk.gdk.threads_leave()
+    del data
 
   def cache_item(self, model, titer):
     view = self.collectionView
