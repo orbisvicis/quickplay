@@ -56,9 +56,9 @@ class mPlayer(threading.Thread, _IdleObject):
   
   def run(self):
 	#create our control fifo, this is very important for proper functionality
-    if not os.path.exists(".qpf"):
-      os.mkfifo(".qpf")
-    mplayerProcess = subprocess.Popen(("mplayer", "-nolirc", "-noconsolecontrols", "-nolirc", "-nojoystick", "-quiet", "-input", "file=.qpf", self.url))
+    if not os.path.exists(os.path.expanduser("~/.qpf")):
+      os.mkfifo(os.path.expanduser("~/.qpf"))
+    mplayerProcess = subprocess.Popen(("mplayer", "-nolirc", "-noconsolecontrols", "-nolirc", "-nojoystick", "-quiet", "-input", "file=" + os.path.expanduser("~/.qpf"), self.url))
     mplayerProcess.wait()
     self.emit("completed")
 
@@ -167,7 +167,7 @@ class AmpacheCommunicator:
 
   def fetch_artists(self, callback):
     try:
-      fh = open('.qp_cache', 'r')
+      fh = open(os.path.expanduser('~/.qp_cache'), 'r')
     except:
       print "No cache file found, will generate"
     else:
@@ -200,7 +200,7 @@ class AmpacheCommunicator:
 
   def fa_cb_done(self, args, junk1, junk2):
     if hasattr(self, 'update') and hasattr(self, 'add'):
-      fh = open('.qp_cache', 'w')
+      fh = open(os.path.expanduser('~/.qp_cache'), 'w')
       fh.write(pickle.dumps({'add': self.add, 'update': self.update, 'url': self.url, 'data': self.artist_ret}))
       fh.close()
     args(self.artist_ret)
@@ -259,7 +259,7 @@ class quickPlayer:
   def login_cb(self):
     if self.authCB.get_active():
       save = (self.servE.get_text(), self.passE.get_text(), self.userE.get_text())
-      fh = open('.qp.save', 'w')
+      fh = open(os.path.expanduser('~/.qp.save'), 'w')
       fh.write(pickle.dumps(save))
       fh.close()
     self.com.fetch_artists(self.login_done)
@@ -336,7 +336,7 @@ class quickPlayer:
   def play_pause(self, widget):
     if self.player:
       if self.player.isAlive():
-        f = open(".qpf", 'w')
+        f = open(os.path.expanduser("~/.qpf"), 'w')
         f.write("pause\n")
         f.close()
 
@@ -347,8 +347,8 @@ class quickPlayer:
     if self.player:
       if self.player.isAlive():
         self.player.disconnect(self.player_sig)
-        f = open(".qpf", 'w')
-        f.write("quit\n");
+        f = open(os.path.expanduser("~/.qpf"), 'w')
+        f.write("quit\n")
         f.close()
         self.player.join()
 
@@ -536,7 +536,7 @@ class quickPlayer:
     self.window.add(mainBox)    
 
     try:
-      fh = open('.qp.save')
+      fh = open(os.path.expanduser('~/.qp.save'), 'r')
       save = pickle.loads(fh.read())
       fh.close()
     except:
