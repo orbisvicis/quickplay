@@ -353,16 +353,14 @@ class quickPlayer:
         self.player.join()
 
   def prev(self, widget):
+    self.stop(None)
     self.play_prev()
 
   def next(self, widget):
+    self.stop(None)
     self.play_next(None)
 
   def play_prev(self):
-    if self.player:
-      if self.player.isAlive():
-        self.stop(None)
-        
     (model, titer) = self.collectionSelection.get_selected()
     if titer:
       path = model.get_path(titer)
@@ -377,10 +375,6 @@ class quickPlayer:
 
   def play_next(self, widget):
     #Get rid of already playing instance
-    if self.player:
-      if self.player.isAlive():
-        self.stop(None)
-        #if not self.next_override:
     (model, titer) = self.collectionSelection.get_selected()
     if titer:
       next = model.iter_next(titer)
