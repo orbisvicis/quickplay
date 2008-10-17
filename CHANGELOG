@@ -1,0 +1,120 @@
+commit 66c62e0df3630883f23ee2613e5a239e3b4d1e34
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Fri Sep 26 13:48:47 2008 -0700
+
+    Bugfix, Hangs on fifo open when stop is called during automatic song
+    advancement.
+
+commit 63219199889e169aa636fc9484481f322d7ccc8e
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Wed Aug 27 13:41:12 2008 -0700
+
+    Updated to make sure temp and hidden files go to homedir.
+
+commit 2950b8b6672c3b0a79adbda2477e817cf8abddfb
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Wed Aug 6 14:45:33 2008 -0700
+
+    Tiny bugfix for lists less than 5000 long.
+
+commit 2f5a12cce4678db6b146a7e8e35bb545e2ab180d
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Wed Aug 6 14:37:07 2008 -0700
+
+    Added recursive calls for artist lists longer than 5000
+
+commit 15c1b7c273793640d6419fc1ab42dd1ddafc03b9
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Wed Aug 6 13:01:17 2008 -0700
+
+    Added GPL header.
+
+commit c77acdaa6e01b5af852153c090017ce382fb5d26
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Mon Aug 4 14:54:48 2008 -0700
+
+    Fixed the race conditions, all player functionality is based around gobject signals and the thread class. HAWT STUFF!!
+
+commit 9d21e1f411de6bbdd134d636b32c793d396ae6c3
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Mon Aug 4 13:58:19 2008 -0700
+
+    Minor changes for API stuff.
+
+commit d46fe95129992f73967621edce2612ce692c0cca
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Mon Jun 2 12:14:28 2008 -0700
+
+    Append version information to handshake.
+
+commit 3711405a48c65cc80d2920b9a8faa22b4590b17c
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Wed May 14 16:43:14 2008 -0700
+
+    Better logic for caching. Saves server url as well.
+
+commit eba5a3947674fecdb041228f1634d15b44078c7a
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Wed May 14 16:40:16 2008 -0700
+
+    Added caching. Not very intelligent.
+
+commit 59f605c5691836035dbfded6be57c09a8ac001b0
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Thu Feb 21 15:48:52 2008 -0800
+
+    Many changes to threading.  Doesn't seem to lock up at all anymore. Minor changes to playback functionality.
+
+commit f80303c1dcc4d45787bc1ce3f9d7696edac822bd
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Fri Feb 15 15:53:59 2008 -0800
+
+    Much prettier animation for the progress bar.
+
+commit 9543cc8f81bd5992156202b853c8f6c3a74dfd48
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Fri Feb 15 13:52:29 2008 -0800
+
+    Threading is fixed and functional, progress bar is still kind of ugly, but it works.
+
+commit 33e6840dbec337be1c617fc0ebcebddc7091087b
+Author: Kevin James Purdy <pountaar@mona.sandbenders.org>
+Date:   Fri Feb 15 12:38:50 2008 -0800
+
+    Everything is still fairly broken. Migrating to threaded fetches.
+
+commit 2341b03d752fa6058ff08a3fd89a0850fb57601c
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Wed Feb 13 20:21:11 2008 -0800
+
+    Ugly changes, will fix soon.
+
+commit 0ae2f8fe8b59180fba23128b8df8bbc350dfdb4a
+Author: Kevin Purdy <purdyk@kratos.nws.oregonstate.edu>
+Date:   Wed Feb 13 15:08:33 2008 -0800
+
+    Threaded the initial login function so as not to be so confusing.
+
+commit bd00bcd5d9ca8449640370174083c3979ffe1352
+Author: pountaar <pountaar>
+Date:   Wed Feb 13 00:51:02 2008 +0000
+
+    Many changes, better playback logic and caching.
+
+commit fe21c903edb64d3f3e350c76d09639c760143c4a
+Author: pountaar <pountaar>
+Date:   Tue Jan 29 21:09:39 2008 +0000
+
+    Added authentication saves.
+
+commit 1c2c40de4edfeeb5d907c15ab4205c14da7477c5
+Author: pountaar <pountaar>
+Date:   Fri Dec 7 23:44:26 2007 +0000
+
+    Added username field, some comments..
+
+commit 0752331033385b6b9104faa2ef4e6de210f06812
+Author: pountaar <pountaar>
+Date:   Fri Dec 7 18:51:31 2007 +0000
+
+    Initial import.  Should have been done ages ago.
