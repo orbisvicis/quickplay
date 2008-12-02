@@ -33,7 +33,69 @@ import threading
 import os
 import subprocess
 import pickle
+import signal
+import socket
+import ssl
+import re
 
+class localServer:
+  def __init__(self,url,port,protocol=socket.SOCK_STREAM,connections=1):
+    self.url = url
+    self.port = port
+    self.protocol = protocol
+    self.connections = connections
+
+  def serverException(self,msg):
+    print type(msg)
+    print msg.args
+    print msg
+
+  def serverCreate(self):
+    serverSocket = None
+    try:
+      serverSocket = socket.socket(socket.AF_INET, self.protocol)
+    except socket.error, msg:
+      print "Error defining serverSocket, defaulting to type None"
+      self.serverException(msg)
+      serverSocket = None
+    try:
+      serverSocket.bind((self.url,self.port))
+      serverSocket.listen(self.connections)
+    except socket.error, msg:
+      print "Error binding/connecting, closing socket and returning to type None"
+      self.serverException(msg)
+      serverSocket.close()
+      serverSocket = None
+    self.serverSocket = serverSocket
+
+  def serverAccept(self):
+    while 1:
+      no_data = 0
+      client_socket, client_address = self.serverSocket.accept()
+      url_play = urllib2.urlopen(os.read(serverSend, 1024))
+      client_socket.send('HTTP/1.0 200 OK\r\n')
+      client_socket.send(url_play.info().__str__())
+      print(url_play.info().__str__())
+      client_socket.send('\r\n')
+      while no_data <= 5:
+        data = url_play.read(4096)
+        if not data:
+          no_data+=1
+        try:
+          client_socket.send(data)
+        except socket.error, msg:
+          print "Sending data failed, client probably closed connection"
+	  self.serverException(msg)
+	  client_socket.close()
+	  no_data = 10
+	time.sleep(0.005)
+      client_socket.close()
+      del client_socket
+      del client_address
+      del url_play
+
+  def serverClose(self):
+    self.serverSocket.close()
 
 class _IdleObject(gobject.GObject):
   def __init__(self):
@@ -48,18 +110,42 @@ class mPlayer(threading.Thread, _IdleObject):
     'completed' : (gobject.SIGNAL_RUN_LAST, gobject.TYPE_NONE, ())
     }
   
-  def __init__(self, url, parent):
+  def __init__(self, url, parent, initial_vol, prog_bar):
     threading.Thread.__init__(self)
     _IdleObject.__init__(self)
     self.url = url
     self.parent = parent
+    self.initial_vol = str(int(round(initial_vol*100)))
+    self.prog_bar = prog_bar
   
   def run(self):
 	#create our control fifo, this is very important for proper functionality
     if not os.path.exists(os.path.expanduser("~/.qpf")):
       os.mkfifo(os.path.expanduser("~/.qpf"))
-    mplayerProcess = subprocess.Popen(("mplayer", "-nolirc", "-noconsolecontrols", "-nolirc", "-nojoystick", "-quiet", "-input", "file=" + os.path.expanduser("~/.qpf"), self.url))
+    os.write(clientReceive, self.url)
+    mplayerProcess = subprocess.Popen(("mplayer","-nolirc", "-noconsolecontrols", "-nolirc", "-nojoystick","-input", "file=" + os.path.expanduser("~/.qpf"),"-cache","8192","http://127.0.0.1:20000"),stdin=subprocess.PIPE,stdout=subprocess.PIPE,universal_newlines=False)
+    while mplayerProcess.poll() == None:
+      output = None
+      try:
+        output = mplayerProcess.stdout.read(512)
+      except:
+        pass
+      try:
+        output = output.rsplit('\x1b[J\r',2)
+        output = output[1]
+        output = output.split()
+        position = float(output[1])
+        total = float(167)
+      except:
+        pass
+      try:
+        self.prog_bar.set_fraction(position/total)
+	self.prog_bar.set_text(str(position) + " / " + str(total))
+      except:
+        pass
     mplayerProcess.wait()
+    self.prog_bar.set_fraction(1)
+    self.prog_bar.set_text(" ")
     self.emit("completed")
 
 gobject.type_register(mPlayer)
@@ -268,21 +354,24 @@ class quickPlayer:
     gtk.gdk.threads_enter()
     self.collectionStore.clear()
     for each in data:
+      #print "None " + str(each[0]) + " False " + " 0 " + str(each[1]) + " None"
       self.collectionStore.append(None, (each[0], False, 0, each[1], None))
     gtk.gdk.threads_leave()
     del data
 
+  # convert TreeModelFilter iters and models to TreeStore iterns and models here ?
   def cache_item(self, model, titer):
+    child_titer = model.convert_iter_to_child_iter(titer)
     view = self.collectionView
     iID = model.get_value(titer, 0)
     iSeen = model.get_value(titer, 1)
     itype = model.get_value(titer, 2)
     if itype == 0 and not iSeen:
-      model.set_value(titer,1,True)
-      return self.com.fetch_albums(iID, self.ci_cb, (model, titer, 1))
+      model.get_model().set_value(child_titer,1,True)
+      return self.com.fetch_albums(iID, self.ci_cb, (model.get_model(), child_titer, 1))
     if itype == 1 and not iSeen:
-      model.set_value(titer,1,True)
-      return self.com.fetch_songs(iID, self.ci_cb, (model, titer, 2))
+      model.get_model().set_value(child_titer,1,True)
+      return self.com.fetch_songs(iID, self.ci_cb, (model.get_model(), child_titer, 2))
                   
   def ci_cb(self, data, args):
     model = args[0]
@@ -326,7 +415,7 @@ class quickPlayer:
     self.collectionSelection.select_iter(titer)
 
     url = model.get_value(titer, 4)[7]
-    self.player = mPlayer(url, self)
+    self.player = mPlayer(url, self, self.volScroll.get_value(), self.progB)
     self.player_sig = self.player.connect('completed', self.play_next)
     self.player.start()
 
@@ -386,6 +475,16 @@ class quickPlayer:
         if model.get_value(next, 2) > self.playLevel:
           self.play_item(next)
 
+  def volume_adjust(self, widget, adjustment):
+    if self.player:
+      if self.player.isAlive():
+        vol_change = int(round(adjustment*100))
+	if vol_change%4 == 0:
+          f = open(os.path.expanduser("~/.qpf"), 'w')
+	  print "volume " + str(vol_change) + "  1"
+	  f.write("volume " + str(vol_change) + "  1\n")
+	  f.close()
+
   def progress(self, val, txt = None):
     gtk.gdk.threads_enter()
     if val == None:
@@ -398,6 +497,32 @@ class quickPlayer:
     if txt != None:
       self.progB.set_text(txt)
     gtk.gdk.threads_leave()
+
+  def refilterTree(self, widget, treeModelFilter):
+    treeModelFilter.refilter()
+
+  def clearFilter(self, widget, treeModelFilter, searchE):
+    searchE.set_text('')
+    self.refilterTree(widget, treeModelFilter)
+
+  def matchText(self, model, titer, searchE):
+    data = searchE.get_text()
+    title = model.get_value(titer, 3)
+    type = model.get_value(titer, 2)
+    #print str(model.get_value(titer, 0))+" "+str(model.get_value(titer, 1))+" "+str(model.get_value(titer, 2))+" "+str(model.get_value(titer, 3))+" "+str(model.get_value(titer, 4))
+    if data == '' or title == '' or data == None or title == None or type != 0:
+      return True
+    else:
+      data = data.split() 
+      match = False
+      for each in data:
+        regex = re.compile('.*'+each+'.*', re.IGNORECASE)
+	if regex.match(title):
+          match = True
+      #print str(match)+" "+title
+      del data
+      del title
+      return match
 
   def tick(self):
     if self.ticking:
@@ -432,7 +557,7 @@ class quickPlayer:
 
     self.servE = gtk.Entry()
     self.servE.show()
-    authBox.pack_start(self.servE, True, True ,2)
+    authBox.pack_start(self.servE, True, True, 2)
 
     passL = gtk.Label("Key:")
     passL.show()
@@ -465,11 +590,35 @@ class quickPlayer:
 
     mainBox.pack_start(authBox, False, False, 2)
 
+    self.collectionStore = gtk.TreeStore(gobject.TYPE_INT, gobject.TYPE_BOOLEAN, gobject.TYPE_INT, gobject.TYPE_STRING, gobject.TYPE_PYOBJECT)
+    self.collectionFilter = self.collectionStore.filter_new()
+
+    filterBox = gtk.HBox()
+
+    searchButton = gtk.Button(label="Search")
+    searchButton.show()
+    searchButton.connect('clicked', self.refilterTree, self.collectionFilter)
+    filterBox.pack_start(searchButton, False, False, 2)
+
+    self.searchE = gtk.Entry()
+    self.searchE.show()
+    self.searchE.connect('activate', self.refilterTree, self.collectionFilter)
+    filterBox.pack_start(self.searchE, True, True, 2)
+
+    clearSearchButton = gtk.Button(label="Clear")
+    clearSearchButton.show()
+    clearSearchButton.connect('clicked', self.clearFilter, self.collectionFilter, self.searchE)
+    filterBox.pack_start(clearSearchButton, False, False, 2)
+
+    filterBox.show()
+
+    mainBox.pack_start(filterBox, False, False, 2)
+
     collectionBox = gtk.ScrolledWindow()
     collectionBox.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
 
-    self.collectionStore = gtk.TreeStore(gobject.TYPE_INT, gobject.TYPE_BOOLEAN, gobject.TYPE_INT, gobject.TYPE_STRING, gobject.TYPE_PYOBJECT)
-    self.collectionView = gtk.TreeView(self.collectionStore)
+    self.collectionFilter.set_visible_func(self.matchText, self.searchE)
+    self.collectionView = gtk.TreeView(self.collectionFilter)
     self.collectionView.set_search_column(3)
     
     collectionColumn = gtk.TreeViewColumn("Artist / Album / Song")
@@ -477,6 +626,7 @@ class quickPlayer:
     cRender = gtk.CellRendererText()
     collectionColumn.pack_start(cRender, True)
     collectionColumn.add_attribute(cRender, 'text', 3)
+    collectionColumn.set_sort_column_id(3)
 
     self.collectionView.connect("row-activated", self.do_activate)
 
@@ -521,6 +671,12 @@ class quickPlayer:
     next.get_children()[0].get_children()[0].get_children()[1].hide()
     next.connect('clicked', self.next)
     butBox.pack_start(next, True, True, 0)
+
+    self.volScroll = gtk.VolumeButton()
+    self.volScroll.set_value(100)
+    self.volScroll.show()
+    self.volScroll.connect('value-changed', self.volume_adjust)
+    butBox.pack_start(self.volScroll, False, True, 50)
     
     butBox.show()
 
@@ -548,5 +704,16 @@ class quickPlayer:
     return
 
 if __name__ == "__main__":
-  qp = quickPlayer()
-  qp.run()
+  serverReceive, clientSend = os.pipe()
+  serverSend, clientReceive = os.pipe()
+
+  pid = os.fork()
+  if pid == 0:
+    my_localServer = localServer("127.0.0.1",20000)
+    my_localServer.serverCreate()
+    my_localServer.serverAccept()
+  else:
+    qp = quickPlayer()
+    qp.run()
+    # this will close the fork after the main window has been killed
+    os.kill(pid,signal.SIGTERM)
