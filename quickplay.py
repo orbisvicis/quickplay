@@ -25,77 +25,20 @@ import pygtk
 pygtk.require('2.0')
 import gtk
 import gobject
-import md5
+import hashlib
 import time
 import urllib2
 import xml.dom.minidom
 import threading
 import os
+import sys
 import subprocess
 import pickle
 import signal
+import asyncore
 import socket
-import ssl
 import re
-
-class localServer:
-  def __init__(self,url,port,protocol=socket.SOCK_STREAM,connections=1):
-    self.url = url
-    self.port = port
-    self.protocol = protocol
-    self.connections = connections
-
-  def serverException(self,msg):
-    print type(msg)
-    print msg.args
-    print msg
-
-  def serverCreate(self):
-    serverSocket = None
-    try:
-      serverSocket = socket.socket(socket.AF_INET, self.protocol)
-    except socket.error, msg:
-      print "Error defining serverSocket, defaulting to type None"
-      self.serverException(msg)
-      serverSocket = None
-    try:
-      serverSocket.bind((self.url,self.port))
-      serverSocket.listen(self.connections)
-    except socket.error, msg:
-      print "Error binding/connecting, closing socket and returning to type None"
-      self.serverException(msg)
-      serverSocket.close()
-      serverSocket = None
-    self.serverSocket = serverSocket
-
-  def serverAccept(self):
-    while 1:
-      no_data = 0
-      client_socket, client_address = self.serverSocket.accept()
-      url_play = urllib2.urlopen(os.read(serverSend, 1024))
-      client_socket.send('HTTP/1.0 200 OK\r\n')
-      client_socket.send(url_play.info().__str__())
-      print(url_play.info().__str__())
-      client_socket.send('\r\n')
-      while no_data <= 5:
-        data = url_play.read(4096)
-        if not data:
-          no_data+=1
-        try:
-          client_socket.send(data)
-        except socket.error, msg:
-          print "Sending data failed, client probably closed connection"
-	  self.serverException(msg)
-	  client_socket.close()
-	  no_data = 10
-	time.sleep(0.005)
-      client_socket.close()
-      del client_socket
-      del client_address
-      del url_play
-
-  def serverClose(self):
-    self.serverSocket.close()
+import math
 
 class _IdleObject(gobject.GObject):
   def __init__(self):
@@ -104,49 +47,197 @@ class _IdleObject(gobject.GObject):
   def emit(self, *args):
     gobject.idle_add(gobject.GObject.emit, self, *args)
 
+class AsyncHandler(asyncore.dispatcher):
+  def __init__(self, conn_sock, client_address, server):
+    self.server = server
+    self.client_address = client_address
+    self.buffer = ""
+
+    self.is_writable = True
+    self.is_readable = False
+
+    asyncore.dispatcher.__init__(self, conn_sock)
+
+  def readable(self):
+    return self.is_readable
+
+  def writable(self):
+    return self.is_writable
+
+  def handle_read(self):
+    pass
+
+  def handle_write(self):
+    if self.server.data_url != None:
+      try:
+        url_object = urllib2.urlopen(self.server.data_url)
+      except URLError, msg:
+        print msg.reason
+        self.is_writable = False
+      else:
+        try:
+          self.send('HTTP/1.0 200 OK\r\n')
+          self.send(url_object.info().__str__())
+          self.send('\r\n')
+        except socket.error, msg:
+          print msg
+          self.is_writable = False
+        else:
+          no_data = False
+          while no_data == False and self.is_writable == True:
+            self.buffer += url_object.read(4096)
+	    if self.buffer == "":
+              no_data = True
+            else:
+              while len(self.buffer) != 0 and self.is_writable == True:
+                try:
+                  sent = self.send(self.buffer)
+                except socket.error, msg:
+                  print msg
+                  self.is_writable = False
+                else:
+                  self.buffer = self.buffer[sent: ]
+      self.is_writable = False
+    else:
+      self.is_writable = False
+    self.handle_close();
+
+  def handle_close(self):
+    self.close()
+
+class AsyncServer(asyncore.dispatcher, threading.Thread, _IdleObject):
+  def __init__(self, host, port=0, address_family=socket.AF_INET, socket_type=socket.SOCK_STREAM, connection_queue=1, allow_reuse_address=False, handlerClass=AsyncHandler, data_url=None):
+    self.host = host
+    self.port = port
+    self.address_family = address_family
+    self.socket_type = socket_type
+    self.connection_queue = connection_queue
+    self.allow_reuse_address = allow_reuse_address
+    self.handlerClass = handlerClass
+    self.data_url = data_url
+
+    asyncore.dispatcher.__init__(self)
+    threading.Thread.__init__(self)
+    _IdleObject.__init__(self)
+
+    self.create_socket(self.address_family, self.socket_type)
+
+    if self.allow_reuse_address:
+      self.set_reuse_addr()
+
+    self.server_bind()
+    self.server_activate()
+
+  def server_bind(self):
+    self.bind((self.host, self.port))
+
+  def server_activate(self):
+    self.listen(self.connection_queue)
+
+  def setDataUrl(self, data_url):
+    self.data_url = data_url
+
+  def fileno(self):
+    return self.socket.fileno()
+
+  def run(self):
+    asyncore.loop(5)
+
+  def handle_accept(self):
+    (conn_sock, client_address) = self.accept()
+    if self.verify_request(conn_sock, client_address):
+      self.process_request(conn_sock, client_address)
+
+  def verify_request(self, conn_sock, client_address):
+    return True
+
+  def process_request(self, conn_sock, client_address):
+    self.handlerClass(conn_sock, client_address, self)
+
+  def handle_close(self):
+    self.close()
+
+gobject.type_register(AsyncServer)
+
 #Threaded mplayer class.  Create it with a url to a media file, start it and it plays.
 class mPlayer(threading.Thread, _IdleObject):
   __gsignals__ = {
     'completed' : (gobject.SIGNAL_RUN_LAST, gobject.TYPE_NONE, ())
     }
   
-  def __init__(self, url, parent, initial_vol, prog_bar):
+  def __init__(self, url, parent, initial_vol, prog_bar, time_length, server, title):
     threading.Thread.__init__(self)
     _IdleObject.__init__(self)
     self.url = url
     self.parent = parent
     self.initial_vol = str(int(round(initial_vol*100)))
     self.prog_bar = prog_bar
+    self.time_length = time_length
+    server.setDataUrl(url)
+    self.address = "http://" + server.getsockname()[0] + ":" + str(server.getsockname()[1])
+    self.title = title
   
   def run(self):
-	#create our control fifo, this is very important for proper functionality
+    #create our control fifo, this is very important for proper functionality
     if not os.path.exists(os.path.expanduser("~/.qpf")):
       os.mkfifo(os.path.expanduser("~/.qpf"))
-    os.write(clientReceive, self.url)
-    mplayerProcess = subprocess.Popen(("mplayer","-nolirc", "-noconsolecontrols", "-nolirc", "-nojoystick","-input", "file=" + os.path.expanduser("~/.qpf"),"-cache","8192","http://127.0.0.1:20000"),stdin=subprocess.PIPE,stdout=subprocess.PIPE,universal_newlines=False)
+    mplayerProcess = subprocess.Popen(("mplayer","-nolirc", "-noconsolecontrols", "-nolirc", "-nojoystick","-input", "file=" + os.path.expanduser("~/.qpf"),"-cache","8192",self.address),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,universal_newlines=False,close_fds=False)
+    self.prog_bar.set_text("Buffering... " + self.title)
+    
+    #Get rid of the unneeded mplayer informataion, makes progress bar slightly more accurate at beginning
+    #Also ensures that mplayer has loaded sufficently to change the volume, except doesnt work
+    try:
+      mplayerProcess.stdout.read(2048)
+    except os.error, msg:
+      print "client closed but byte count not reached"
+    #f = open(os.path.expanduser("~/.qpf"), 'w')
+    #f.write("volume " + self.initial_vol + " 1\n")
+    #f.close
+
+    #once mplayer returns ID_LENGTH, get the length using the regex, call set_pulse_step(1/length) and call pulse() once every second
+    # Keep calling time this way? If the network lags, it could be more accurate
     while mplayerProcess.poll() == None:
-      output = None
       try:
         output = mplayerProcess.stdout.read(512)
-      except:
-        pass
-      try:
-        output = output.rsplit('\x1b[J\r',2)
-        output = output[1]
-        output = output.split()
-        position = float(output[1])
-        total = float(167)
-      except:
-        pass
-      try:
-        self.prog_bar.set_fraction(position/total)
-	self.prog_bar.set_text(str(position) + " / " + str(total))
-      except:
-        pass
+      except os.error, msg:
+        output   = None
+        print "client closed but byte count not reached"
+      if output != None:
+        if len(re.compile('\\x1b\[J\\r').findall(output)) >= 2:
+	  try:
+            regex = re.compile('.*\x1b\[J\\r(A\:\s*(\d+\.\d) \((?:\d{2}\:)*\d{2}\.\d\) of\s*(\d+\.\d) \((?:[a-zA-Z]*|(?:\d{2}\:)*\d{2}\.\d)\)\s*(?:\d+\.\d\%|\?+,\?\%)\s*(?:\d+\%\s)?)\x1b\[J\\r.*?')
+            match = regex.match(output)
+	    if match != None:
+	      position = match.group(2)
+	      position = float(position)
+	      total = float(self.time_length)
+	      if total != 0:
+                ratio = position / total
+                self.prog_bar.set_fraction(ratio)
+                self.prog_bar.set_text(self.time(position) + " / " + self.time(total) + " - " + self.title)
+              else:
+                print "Error, division by zero"
+            else:
+              print "Error, None match"
+              #print repr(output)
+	  except Exception, msg:
+            print "Unexpected mplayer stdout"
+	    print type(msg)
+	    print msg.args
+	    print msg
     mplayerProcess.wait()
     self.prog_bar.set_fraction(1)
     self.prog_bar.set_text(" ")
     self.emit("completed")
+
+  def time(self, seconds_float):
+    seconds = int(round(seconds_float))
+    if seconds <= 60:
+      return str(seconds) + "s"
+    if seconds%60 < 10:
+      return str(int(math.floor(seconds/60))) + ":0" + str(seconds%60)
+    else:
+      return str(int(math.floor(seconds/60))) + ":" + str(seconds%60)
 
 gobject.type_register(mPlayer)
     
@@ -154,6 +245,13 @@ gobject.type_register(mPlayer)
 class AuthError(Exception):
     """Authentication Failure"""
     pass
+
+class StreamStdout:
+  def __init__(self, destination):
+    self.destination = destination
+
+  def write(self, text):
+    self.destination.insert(self.destination.get_end_iter(), text)
 
 class ThreadedFetcher(threading.Thread, _IdleObject):
   def __init__(self, url, doneCB, args, progressCB=None):
@@ -218,7 +316,9 @@ class AmpacheCommunicator:
   #reauthenticate, should get called on fetch error
   def reauthenticate(self):
     timestamp = int(time.time())
-    auth = self.fetch("?action=handshake&auth=%s&timestamp=%s" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp))
+    md5 = hashlib.md5()
+    md5.update(str(timestamp) + password)
+    auth = self.fetch("?action=handshake&auth=%s&timestamp=%s" % (md5.hexdigest(), timestamp))
     dom = xml.dom.minidom.parseString(auth)
     try:
       self.auth = dom.getElementsByTagName("auth")[0].childNodes[0].data
@@ -230,10 +330,12 @@ class AmpacheCommunicator:
     self.password = password
     self.url = u + "/server/xml.server.php"
     timestamp = int(time.time())
+    md5 = hashlib.md5()
+    md5.update(str(timestamp) + password)
     if user != None:
-      self.fetch("?action=handshake&auth=%s&timestamp=%s&user=%s&version=350001" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp, user), self.auth_cb, callback)
+      self.fetch("?action=handshake&auth=%s&timestamp=%s&user=%s&version=350001" % (md5.hexdigest(), timestamp, user), self.auth_cb, callback)
     else:
-      self.fetch("?action=handshake&auth=%s&timestamp=%s&version=350001" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp), self.auth_cb, callback)
+      self.fetch("?action=handshake&auth=%s&timestamp=%s&version=350001" % (md5.hexdigest(), timestamp), self.auth_cb, callback)
     return True
 
   def auth_cb(self, auth, args):
@@ -324,7 +426,46 @@ class AmpacheCommunicator:
             node.getElementsByTagName("url")[0].childNodes[0].data))
     args[0](ret, args[1])
 
-#Main GUI and logic
+# Extra windows - album art etc
+class extraWindows:
+  def delete_event(self, widget, event, data=None):
+    return False
+
+  def destroy(self, widget, data=None):
+    return False
+
+  def get_art(self):
+    if self.url != None:
+      fetcher = ThreadedFetcher(self.url, self.show_art, None, self.progress)
+      fetcher.start()
+      return fetcher
+    else:
+      return None
+
+  def show_art(self, image, args=None):
+    loader = gtk.gdk.PixbufLoader()
+    loader.write(image)
+    pixbuf = loader.get_pixbuf()
+    loader.close()
+    image_widget =  gtk.Image()
+    image_widget.set_from_pixbuf(pixbuf)
+    image_widget.show()
+    self.window.add(image_widget)
+    self.window.resize(pixbuf.get_width(),pixbuf.get_height())
+
+    self.window.show()
+
+  def __init__(self, title, url, progress = None):
+    self.title = title
+    self.url = url
+    self.progress = progress
+
+    self.window = gtk.Window(gtk.WINDOW_TOPLEVEL)
+    self.window.connect("delete_event", self.delete_event)
+    self.window.connect("destroy", self.destroy)
+    self.window.set_title(self.title)
+
+# Main GUI and logic
 class quickPlayer:
   def delete_event(self, widget, event, data=None):
     return False
@@ -359,7 +500,7 @@ class quickPlayer:
     gtk.gdk.threads_leave()
     del data
 
-  # convert TreeModelFilter iters and models to TreeStore iterns and models here ?
+  # convert TreeModelFilter iters and models to TreeStore iters and models here ?
   def cache_item(self, model, titer):
     child_titer = model.convert_iter_to_child_iter(titer)
     view = self.collectionView
@@ -379,9 +520,29 @@ class quickPlayer:
     val = args[2]
     gtk.gdk.threads_enter()
     for each in data:
+      #print str(each[0]) + " False " + str(val) + " " + str(each[1]) + " " + str(each)
       model.append(titer, (each[0], False, val, each[1], each))
-    self.collectionView.expand_row(model.get_path(titer), False)
+    self.collectionView.expand_row(self.collectionView.get_model().convert_child_path_to_path(model.get_path(titer)), False)
     gtk.gdk.threads_leave()
+
+  def button_clicked(self, widget, event, data):
+    if event.button == 1:
+      print "left click"
+      self.do_selection(data)
+    if event.button == 2:
+      print "middle click"
+    if event.button == 3:
+      print "right click"
+      menu = gtk.Menu()
+      function = gtk.MenuItem("Get Art")
+      menu.append(function)
+      function.show()
+      menu.popup(None, None, None, event.button, event.time)
+    
+    if event.type == gtk.gdk.BUTTON_PRESS:
+      print "single click"
+    if event.type == gtk.gdk._2BuTTON_PRESS:
+      print "double click"
 
   def do_selection(self, selection, data=None):
     (model, titer) = selection.get_selected()
@@ -415,7 +576,9 @@ class quickPlayer:
     self.collectionSelection.select_iter(titer)
 
     url = model.get_value(titer, 4)[7]
-    self.player = mPlayer(url, self, self.volScroll.get_value(), self.progB)
+    time_length = model.get_value(titer, 4)[6]
+    title = model.get_value(titer, 3)
+    self.player = mPlayer(url, self, self.volScroll.get_value(), self.progB, time_length, self.server, title)
     self.player_sig = self.player.connect('completed', self.play_next)
     self.player.start()
 
@@ -481,7 +644,6 @@ class quickPlayer:
         vol_change = int(round(adjustment*100))
 	if vol_change%4 == 0:
           f = open(os.path.expanduser("~/.qpf"), 'w')
-	  print "volume " + str(vol_change) + "  1"
 	  f.write("volume " + str(vol_change) + "  1\n")
 	  f.close()
 
@@ -499,7 +661,9 @@ class quickPlayer:
     gtk.gdk.threads_leave()
 
   def refilterTree(self, widget, treeModelFilter):
+    self.searchButtonClicked = True
     treeModelFilter.refilter()
+    self.searchButtonClicked = False
 
   def clearFilter(self, widget, treeModelFilter, searchE):
     searchE.set_text('')
@@ -510,7 +674,7 @@ class quickPlayer:
     title = model.get_value(titer, 3)
     type = model.get_value(titer, 2)
     #print str(model.get_value(titer, 0))+" "+str(model.get_value(titer, 1))+" "+str(model.get_value(titer, 2))+" "+str(model.get_value(titer, 3))+" "+str(model.get_value(titer, 4))
-    if data == '' or title == '' or data == None or title == None or type != 0:
+    if data == '' or title == '' or data == None or title == None or type != 0 or self.searchButtonClicked == False:
       return True
     else:
       data = data.split() 
@@ -531,9 +695,26 @@ class quickPlayer:
       return True
     return False
 
+  def manage_art(self, widget):
+    #print "collectionSelection: "+str(self.collectionSelection)
+    #print "get_selection() "+str(self.collectionSelection.get_selected())
+    (model, titer) = self.collectionSelection.get_selected()
+    art_window = None
+    #print "model: "+str(model)
+    #print "titer: "+str(titer)
+    if titer != None:
+      rowLevel =  model.get_value(titer, 2)
+      if rowLevel == 1:
+        art_window = extraWindows("quickplay album art", model.get_value(titer, 4)[5], self.progress)
+      if rowLevel == 2:
+        parent_titer = model.iter_parent(titer)
+        art_window = extraWindows("quickplay album art", model.get_value(parent_titer, 4)[5], self.progress)
+      art_window.get_art()
 
-  def __init__(self):
+  def __init__(self, server=None):
     gtk.gdk.threads_init()
+
+    self.server = server
 
     self.ticking = False
 
@@ -545,7 +726,7 @@ class quickPlayer:
     self.window.connect("delete_event", self.delete_event)
     self.window.connect("destroy", self.destroy)
     self.window.set_title("Ampache Quick Player")
-    self.window.resize(600,600)
+    self.window.resize(1600,600)
 
     mainBox = gtk.VBox()
 
@@ -595,6 +776,8 @@ class quickPlayer:
 
     filterBox = gtk.HBox()
 
+    self.searchButtonClicked = False
+
     searchButton = gtk.Button(label="Search")
     searchButton.show()
     searchButton.connect('clicked', self.refilterTree, self.collectionFilter)
@@ -626,13 +809,16 @@ class quickPlayer:
     cRender = gtk.CellRendererText()
     collectionColumn.pack_start(cRender, True)
     collectionColumn.add_attribute(cRender, 'text', 3)
-    collectionColumn.set_sort_column_id(3)
+    #collectionColumn.set_sort_column_id(3)
 
     self.collectionView.connect("row-activated", self.do_activate)
 
     self.collectionSelection = self.collectionView.get_selection()
 
     self.collectionSelection.connect("changed", self.do_selection)
+
+    #self.collectionView.add_events(gtk.gdk.BUTTON_PRESS_MASK)
+    #self.collectionView.connect("button-press-event", self.button_clicked, self.collectionSelection)
 
     self.collectionView.show()
     collectionBox.add(self.collectionView)
@@ -677,13 +863,50 @@ class quickPlayer:
     self.volScroll.show()
     self.volScroll.connect('value-changed', self.volume_adjust)
     butBox.pack_start(self.volScroll, False, True, 50)
+
+    showArt = gtk.Button('Art')
+    showArt.show()
+    showArt.connect('clicked', self.manage_art)
+    butBox.pack_start(showArt, True, True, 0)
     
     butBox.show()
 
     mainBox.pack_start(butBox, False, False, 2)
-
     mainBox.show()
-    self.window.add(mainBox)    
+
+    consoleBuffer = gtk.TextBuffer()
+    
+    console = gtk.TextView(consoleBuffer)
+    console.set_editable(False)
+    console.show()
+
+    consoleScroll = gtk.ScrolledWindow()
+    consoleScroll.set_policy(gtk.POLICY_AUTOMATIC, gtk.POLICY_AUTOMATIC)
+    consoleScroll.add(console)
+    consoleScroll.show()
+
+    consoleFrame = gtk.Frame();
+    consoleFrame.set_shadow_type(gtk.SHADOW_IN)
+    consoleFrame.set_border_width(5)
+    consoleFrame.add(consoleScroll)
+    consoleFrame.show()
+
+    mainTabLabel = gtk.Label("QuickPlay")
+    consoleTabLabel = gtk.Label("Console")
+
+    notebook = gtk.Notebook()
+    notebook.homogenous = True
+    notebook.set_scrollable(True)
+    notebook.append_page(mainBox, mainTabLabel)
+    notebook.append_page(consoleFrame, consoleTabLabel)
+    notebook.set_tab_label_packing(mainBox, True, True, gtk.PACK_START)
+    notebook.set_tab_label_packing(consoleFrame, True, True, gtk.PACK_START)
+    notebook.show()
+
+    self.window.add(notebook)
+
+    sys.stdout = StreamStdout(consoleBuffer)
+    sys.stderr = StreamStdout(consoleBuffer)
 
     try:
       fh = open(os.path.expanduser('~/.qp.save'), 'r')
@@ -704,16 +927,13 @@ class quickPlayer:
     return
 
 if __name__ == "__main__":
-  serverReceive, clientSend = os.pipe()
-  serverSend, clientReceive = os.pipe()
-
-  pid = os.fork()
-  if pid == 0:
-    my_localServer = localServer("127.0.0.1",20000)
-    my_localServer.serverCreate()
-    my_localServer.serverAccept()
-  else:
-    qp = quickPlayer()
-    qp.run()
-    # this will close the fork after the main window has been killed
-    os.kill(pid,signal.SIGTERM)
+  qp = quickPlayer()
+  localServer = AsyncServer("127.0.0.1")
+  localServer.start()
+  qp.server = localServer
+  qp.run()
+  sys.stdout = sys.__stdout__
+  sys.stderr = sys.__stderr__
+  sys.stdout.write("shutting down local server ...\n")
+  localServer.close()
+  localServer.join()
