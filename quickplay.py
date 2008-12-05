@@ -97,6 +97,7 @@ class AsyncHandler(asyncore.dispatcher):
                   self.is_writable = False
                 else:
                   self.buffer = self.buffer[sent: ]
+                  time.sleep(0.01)
       self.is_writable = False
     else:
       self.is_writable = False
@@ -528,7 +529,7 @@ class quickPlayer:
   def button_clicked(self, widget, event, data):
     if event.button == 1:
       print "left click"
-      self.do_selection(data)
+      self.do_selection(data.get_selection())
     if event.button == 2:
       print "middle click"
     if event.button == 3:
@@ -541,7 +542,7 @@ class quickPlayer:
     
     if event.type == gtk.gdk.BUTTON_PRESS:
       print "single click"
-    if event.type == gtk.gdk._2BuTTON_PRESS:
+    if event.type == gtk.gdk._2BUTTON_PRESS:
       print "double click"
 
   def do_selection(self, selection, data=None):
@@ -649,15 +650,16 @@ class quickPlayer:
 
   def progress(self, val, txt = None):
     gtk.gdk.threads_enter()
-    if val == None:
-      if not self.ticking:
-        self.ticking = True
-        gobject.idle_add(self.tick)
-    else:
-      self.ticking = False
-      self.progB.set_fraction(val)
-    if txt != None:
-      self.progB.set_text(txt)
+    if not self.player or not self.player.isAlive():
+      if val == None:
+        if not self.ticking:
+          self.ticking = True
+          gobject.idle_add(self.tick)
+      else:
+        self.ticking = False
+        self.progB.set_fraction(val)
+      if txt != None:
+        self.progB.set_text(txt)
     gtk.gdk.threads_leave()
 
   def refilterTree(self, widget, treeModelFilter):
@@ -710,6 +712,22 @@ class quickPlayer:
         parent_titer = model.iter_parent(titer)
         art_window = extraWindows("quickplay album art", model.get_value(parent_titer, 4)[5], self.progress)
       art_window.get_art()
+
+  def collapseExpand(self, treeViewColumn):
+    if self.headerOperation == True:
+      self.headerOperation = False
+      treeViewColumn.get_tree_view().collapse_all()
+    elif self.headerOperation == False:
+      self.headerOperation = True
+      treeViewColumn.get_tree_view().expand_all()
+
+  def trayClicked(self, status_icon):
+    if self.windowHidden == False:
+      self.windowHidden = True
+      self.window.hide()
+    elif self.windowHidden == True:
+      self.windowHidden = False
+      self.window.show()
 
   def __init__(self, server=None):
     gtk.gdk.threads_init()
@@ -809,6 +827,10 @@ class quickPlayer:
     cRender = gtk.CellRendererText()
     collectionColumn.pack_start(cRender, True)
     collectionColumn.add_attribute(cRender, 'text', 3)
+
+    self.headerOperation = False
+    self.collectionView.set_headers_clickable(True)
+    collectionColumn.connect('clicked', self.collapseExpand)
     #collectionColumn.set_sort_column_id(3)
 
     self.collectionView.connect("row-activated", self.do_activate)
@@ -818,7 +840,7 @@ class quickPlayer:
     self.collectionSelection.connect("changed", self.do_selection)
 
     #self.collectionView.add_events(gtk.gdk.BUTTON_PRESS_MASK)
-    #self.collectionView.connect("button-press-event", self.button_clicked, self.collectionSelection)
+    #self.collectionView.connect("button-press-event", self.button_clicked, self.collectionView)
 
     self.collectionView.show()
     collectionBox.add(self.collectionView)
@@ -828,6 +850,7 @@ class quickPlayer:
 
     self.progB = gtk.ProgressBar()
     self.progB.set_fraction(1)
+    self.progB.set_text(" ")
     self.progB.set_pulse_step(.01)
     self.progB.show()
     mainBox.pack_start(self.progB, False, False, 1)
@@ -904,6 +927,11 @@ class quickPlayer:
     notebook.show()
 
     self.window.add(notebook)
+
+    self.tray = gtk.StatusIcon()
+    self.tray.set_from_stock(gtk.STOCK_NO)
+    self.tray.connect('activate', self.trayClicked)
+    self.windowHidden = False
 
     sys.stdout = StreamStdout(consoleBuffer)
     sys.stderr = StreamStdout(consoleBuffer)
