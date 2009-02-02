@@ -721,13 +721,25 @@ class quickPlayer:
       self.headerOperation = True
       treeViewColumn.get_tree_view().expand_all()
 
-  def trayClicked(self, status_icon):
+  def trayLeftClicked(self, status_icon):
     if self.windowHidden == False:
       self.windowHidden = True
       self.window.hide()
     elif self.windowHidden == True:
       self.windowHidden = False
       self.window.show()
+
+  def trayRightClicked(self, status_icon, button, activate_time):
+    self.trayMenu.popup(None, None, None, button, activate_time)
+
+  def onInsertText(self, widget, text, length, other):
+    print str(text)
+    print str(length)
+    print str(other)
+
+  def onKeyPress(self, widget, event, treeModelFilter, searchE):
+    if event.keyval == 65307:
+      self.clearFilter(widget, treeModelFilter, searchE)
 
   def __init__(self, server=None):
     gtk.gdk.threads_init()
@@ -803,7 +815,10 @@ class quickPlayer:
 
     self.searchE = gtk.Entry()
     self.searchE.show()
+    self.searchE.add_events(gtk.gdk.KEY_PRESS_MASK)
     self.searchE.connect('activate', self.refilterTree, self.collectionFilter)
+    self.searchE.connect('key-press-event', self.onKeyPress, self.collectionFilter, self.searchE)
+    #self.searchE.connect('insert_text', self.onInsertText)
     filterBox.pack_start(self.searchE, True, True, 2)
 
     clearSearchButton = gtk.Button(label="Clear")
@@ -930,8 +945,19 @@ class quickPlayer:
 
     self.tray = gtk.StatusIcon()
     self.tray.set_from_stock(gtk.STOCK_NO)
-    self.tray.connect('activate', self.trayClicked)
+    self.tray.connect('activate', self.trayLeftClicked)
+    self.tray.connect('popup-menu', self.trayRightClicked)
     self.windowHidden = False
+
+    trayMenuPlayPause = gtk.MenuItem("Play/Pause")
+    trayMenuPlayPause.connect('activate', self.play_pause)
+    trayMenuPlayPause.show()
+    trayMenuStop = gtk.MenuItem("Stop")
+    trayMenuStop.connect('activate', self.stop_button)
+    trayMenuStop.show()
+    self.trayMenu = gtk.Menu()
+    self.trayMenu.append(trayMenuPlayPause)
+    self.trayMenu.append(trayMenuStop)
 
     sys.stdout = StreamStdout(consoleBuffer)
     sys.stderr = StreamStdout(consoleBuffer)
