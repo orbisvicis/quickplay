@@ -18,6 +18,10 @@
 # | Foundation, Inc., 59 Temple Place - Suite 330,                         |
 # | Boston, MA  02111-1307, USA.                                           |
 # +------------------------------------------------------------------------+
+#
+# TODO: properly handle URL's lacking their protocol specification, current implementation simply stalls at "Requesting"
+# Better behavior would be to either prepend http:// when lacking a declaration or notify the user with a message in the scrollbar
+# TODO: display error mesages in the progressbar rather than only dumping them to terminal, 
 
 
 
@@ -25,7 +29,7 @@ import pygtk
 pygtk.require('2.0')
 import gtk
 import gobject
-import md5
+import hashlib
 import time
 import urllib2
 import xml.dom.minidom
@@ -144,10 +148,13 @@ class AmpacheCommunicator:
     self.password = password
     self.url = u + "/server/xml.server.php"
     timestamp = int(time.time())
+    password = hashlib.sha256(password).hexdigest()
+    authkey = hashlib.sha256(str(timestamp) + password).hexdigest()
+    #authkey generation no longer inline for greater readability, may cause imaginary memory hit
     if user != None:
-      self.fetch("?action=handshake&auth=%s&timestamp=%s&user=%s&version=350001" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp, user), self.auth_cb, callback)
+      self.fetch("?action=handshake&auth=%s&timestamp=%s&user=%s&version=350001" % (authkey, timestamp, user), self.auth_cb, callback)
     else:
-      self.fetch("?action=handshake&auth=%s&timestamp=%s&version=350001" % (md5.md5(str(timestamp) + password).hexdigest(), timestamp), self.auth_cb, callback)
+      self.fetch("?action=handshake&auth=%s&timestamp=%s&version=350001" % (authkey, timestamp), self.auth_cb, callback)
     return True
 
   def auth_cb(self, auth, args):
@@ -426,7 +433,7 @@ class quickPlayer:
 
     authBox = gtk.HBox()
 
-    servLabel = gtk.Label("Server:")
+    servLabel = gtk.Label("Server path:")
     servLabel.show()
     authBox.pack_start(servLabel, False, False, 2)
 
@@ -434,7 +441,7 @@ class quickPlayer:
     self.servE.show()
     authBox.pack_start(self.servE, True, True ,2)
 
-    passL = gtk.Label("Key:")
+    passL = gtk.Label("API Key:")
     passL.show()
     authBox.pack_start(passL, False, False, 2)
 
