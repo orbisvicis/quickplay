@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=quickplay
+Categories=AudioVideo
+Icon=quickplay.xpm
+Exec=quickplay
+StartupNotify=false
+Terminal=false
+Type=Application
+Comment=Lightweight mp3 player and front end for Ampache
+
